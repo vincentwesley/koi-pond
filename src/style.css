@@ -58,4 +58,4 @@ footer { width: 100%; max-width: 1200px; margin-top: 24px; }
 .embed .chrome { display: none; }
 .embed main { max-width: none; display: block; }
 .embed .pond { position: fixed; inset: 0; aspect-ratio: auto; }
-.embed .pond canvas { -webkit-mask-image: none; mask-image: none; }
+.embed .pond canvas { -webkit-mask-image: none; mask-image: none; touch-action: pan-y; } /* embedded: vertical swipes scroll the host page, taps and sideways drags make ripples */
