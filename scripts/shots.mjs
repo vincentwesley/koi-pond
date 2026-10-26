@@ -36,6 +36,7 @@ try {
   await shot("standalone-1280-light", 1280, 800, "", { light: true });
   await shot("standalone-375-dark", 375, 812);
   await shot("standalone-375-light", 375, 812, "", { light: true });
+  await shot("standalone-1280-reduced", 1280, 800, "", { reduced: true });
   await shot("embed-1280", 1280, 800, "?embed=1");
   await shot("embed-375", 375, 812, "?embed=1");
   await shot("embed-1280-reduced", 1280, 800, "?embed=1", { reduced: true });
