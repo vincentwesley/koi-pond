@@ -1,13 +1,14 @@
-# Koi Pond
+﻿# Koi Pond
 
-An interactive koi pond in the browser. Tap or drag across the water to make ripples; nearby koi swim over to investigate, and petals and lily pads drift when the water moves.
+A living koi pond in the browser. The water, light and season follow your own clock and calendar: sandy and warm in the morning, amber at golden hour, lavender at dusk, a firefly night with a moon streak, autumn leaves, spring blossom, summer lotus and dragonflies, winter ice. Tap or drag to make ripples; koi swim over to investigate and eat the food you drop.
 
 Live: https://vincentwesley.github.io/koi-pond/ (embeddable canvas-only mode: `?embed=1`).
 
-- Ripple height-field simulation on the GPU, refraction, caustics, soft fish shadows, bloom. Works without float render targets (falls back to packed RGBA8).
-- Spine-driven koi in six varieties (kohaku, asagi, ogon, showa, shusui, sanke), all procedural.
-- Lily pads, flowers, drifting petals and water plants.
-- Optional sound, synthesised in code, off until you turn it on.
+- Ripple height-field simulation on the GPU with refraction, soft shadows and bloom. Works without float render targets (falls back to packed RGBA8).
+- Ink-outlined koi (kohaku, asagi, ogon, showa, shusui, sanke, tancho, kumonryu, doitsu, chagoi) with long butterfly-style fins, swimming alone or in loose pairs.
+- Mood engine (`src/mood.ts`): time of day and season from the local clock, no network. Override with `?time=dawn|day|golden|dusk|night` and `?season=spring|summer|autumn|winter`.
+- Lotus leaves and blooms, dragonflies, drifting leaves and petals, fireflies at dusk and night, floating food pellets.
+- Optional sound, synthesised in code, off until you turn it on; the ambience (water, wind, crickets) follows the mood.
 - `?embed=1`: canvas only, fills the viewport, pauses when hidden or off-screen, one still frame under reduced motion, vertical swipes scroll the host page.
 - Adaptive resolution and a device-pixel-ratio cap (1.5 embedded, 2 standalone) keep it smooth on phones.
 

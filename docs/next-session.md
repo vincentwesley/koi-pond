@@ -14,11 +14,13 @@ Finish pass done 2026-10-26: typecheck, unit tests (16), e2e + axe (one spec at 
 - No CI (Actions minutes are limited): verify locally.
 
 ## Current state
-- Standalone page (title, sound + theme pills, credits card) and `?embed=1` (canvas only, DPR cap 1.5, pauses hidden/off-screen, reduced motion = one still frame, `touch-action: pan-y`, message without WebGL2).
-- Ripples work without float render targets (packed RGBA8 fallback; `new Renderer(gl, dpr, { forceNoFloat: true })` forces it). Calm water only if nothing is renderable.
-- Petals drift and pads are nudged by taps, drags, hover wake and koi wakes (`Pond.nudge`); a tap makes 1-3 nearby koi circle the spot for a few seconds.
-- WebGL context loss pauses quietly and rebuilds on restore.
+- Deployed (2026-10-26) is the finish pass; the identity revamp below is committed on local `main` and NOT pushed/deployed (awaiting owner OK).
+- Revamp (so it does not read as a copy of the reference pond): mood engine (clock + season, `?time=`/`?season=` overrides), sandy floor with river stones and sky/moon reflection, ink-outline koi with butterfly fins and new varieties, lotus leaves, seasonal dressing, fireflies, visible food pellets, mood-driven audio ambience.
+- Standalone page and `?embed=1` unchanged in behaviour (DPR cap 1.5 embed, pause hidden/off-screen, reduced motion = one still frame, `touch-action: pan-y`, WebGL2 fallback message, packed-RGBA8 ripple fallback, context restore).
+- Seasons use the northern-hemisphere calendar.
 
 ## Known gaps / ideas
-1. Owner step: OK to push `main` and deploy gh-pages (not done yet).
-2. e2e covers context restore, `pointercancel`, and which ripple path ran (`canvas.dataset.ripples` = half | packed); packed look is checked via `npm run shots`.
+1. Owner step: OK to push `main` and redeploy gh-pages (build with `--base=/koi-pond/`, publish `dist/` to `gh-pages`).
+2. Audio ambience (crickets, wind, water) has never been listened to; tune gains by ear.
+3. `e2e/mood.spec.ts` night+winter test is slow on software GL and flaked once under load.
+4. Spring/winter dressing (small petals, sparse snow) only lightly checked.
