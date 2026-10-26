@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Koi, attractVec, followChain, followVec, springStep, steer, wrapAngle, SEGMENTS, type Vec } from "./spine";
-import { nudge, Pond, DISTURB_LIFE } from "./scene";
+import { nudge, Pond, DISTURB_LIFE, seasonWeights, itemAlpha, fireflyCount, FIREFLIES, PELLETS } from "./scene";
 import { dropShape, rippleStep } from "./ripple";
 
 describe("spine", () => {
@@ -164,5 +164,48 @@ describe("nudge", () => {
     for (const q of p.petals) { expect(Number.isFinite(q.x)).toBe(true); expect(q.x).toBeGreaterThan(-45); expect(q.x).toBeLessThan(845); }
     for (let i = 0; i < 600; i++) p.update(1 / 60);
     for (const pad of p.pads) expect(Math.hypot(pad.ox, pad.oy)).toBeLessThan(2); // koi wakes keep nudging pads slightly
+  });
+});
+
+describe("seasonal dressing and food", () => {
+  it("season weights sum to 1, are one-hot mid-season and cross-fade at the edges", () => {
+    const o = { spring: 0, summer: 0, autumn: 0, winter: 0 };
+    expect(seasonWeights("autumn", 0.5, o).autumn).toBe(1);
+    for (const t of [0, 0.05, 0.3, 0.95, 1]) expect(Object.values(seasonWeights("winter", t, o)).reduce((a, b) => a + b)).toBeCloseTo(1);
+    seasonWeights("winter", 0, o); expect(o.autumn).toBeCloseTo(0.5);
+    seasonWeights("winter", 1, o); expect(o.spring).toBeCloseTo(0.5);
+    expect(itemAlpha(0, 0.5)).toBe(0); expect(itemAlpha(1, 0.99)).toBe(1);
+    expect(itemAlpha(0.6, 0.1)).toBeGreaterThan(itemAlpha(0.6, 0.9));
+  });
+
+  it("firefly count follows the mood", () => {
+    expect(fireflyCount(0)).toBe(0); expect(fireflyCount(1)).toBe(FIREFLIES); expect(fireflyCount(0.5)).toBe(12); expect(fireflyCount(9)).toBe(FIREFLIES);
+  });
+
+  it("a tap drops 3-5 pellets, the pool is bounded, and they expire", () => {
+    const p = new Pond(3, 6);
+    p.resize(800, 600);
+    p.fish.length = 0;
+    const n = p.dropFood(400, 300);
+    expect(n).toBeGreaterThanOrEqual(3); expect(n).toBeLessThanOrEqual(5);
+    for (let i = 0; i < 10; i++) p.dropFood(400, 300);
+    expect(p.pellets.filter((q) => q.alive).length).toBeLessThanOrEqual(PELLETS);
+    for (let i = 0; i < 44; i++) p.update(0.5);
+    expect(p.pellets.some((q) => q.alive)).toBe(false);
+  });
+
+  it("a feeding koi eats a pellet at its head, with a ripple and a callback", () => {
+    const p = new Pond(3, 6);
+    p.resize(800, 600);
+    p.fish = [p.fish[0]];
+    const f = p.fish[0];
+    f.feed(f.head.x, f.head.y, 5);
+    p.dropFood(f.head.x, f.head.y);
+    const q = p.pellets.find((x) => x.alive)!;
+    q.x = f.head.x; q.y = f.head.y;
+    let eaten = 0; p.onEat = () => eaten++;
+    p.update(1 / 60);
+    expect(q.alive).toBe(false); expect(eaten).toBe(1);
+    expect(p.drops.length).toBeGreaterThan(0);
   });
 });

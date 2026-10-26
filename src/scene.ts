@@ -1,6 +1,27 @@
 // Pond contents (koi, pads, flowers, petals, plants) and the CPU geometry built from them each frame.
 
-import { Koi, rng, followChain, TAIL_SEGS, type Vec } from "./spine";
+import { Koi, rng, followChain, wrapAngle, TAIL_SEGS, type Vec } from "./spine";
+import { SEASONS, type Mood, type Season } from "./mood";
+
+export const FIREFLIES = 24, PELLETS = 12, PELLET_LIFE = 20;
+const SNOW_FALL = 1.4, SNOW_LIFE = 9;
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+
+/** Number of fireflies for a mood value 0..1. */
+export const fireflyCount = (f: number): number => Math.round(clamp01(f) * FIREFLIES);
+
+/** Season weights (sum 1): one-hot mid-season, cross-fading with the neighbour in the first/last 12% of it. */
+export function seasonWeights(season: Season, t: number, out: Record<Season, number>): Record<Season, number> {
+  const i = SEASONS.indexOf(season), E = 0.12;
+  for (const s of SEASONS) out[s] = 0;
+  const b = t < E ? 0.5 * (1 - t / E) : t > 1 - E ? 0.5 * (1 - (1 - t) / E) : 0;
+  if (b > 0) out[SEASONS[(i + (t < E ? 3 : 1)) % 4]] = b;
+  out[season] = 1 - b;
+  return out;
+}
+
+/** Staggered fade: item with rank q (0..1) is fully in at weight 1 and appears one after another as w rises. */
+export const itemAlpha = (w: number, q: number): number => clamp01((w - q * 0.6) / 0.4);
 
 /** Vertex layout: pos.xy, uv.xy, center.xy, kind, k1, k2, k3. */
 export const STRIDE = 10;
@@ -52,8 +73,18 @@ export class Mesh {
   }
 }
 
-interface Pad { ox: number; oy: number; vx: number; vy: number; kick: number; nx: number; ny: number; size: number; rot: number; spin: number; age: number; seed: number; flower?: { white: boolean; seed: number } }
-interface Petal { x: number; y: number; ex: number; ey: number; vx: number; vy: number; rot: number; spin: number; size: number }
+interface Pad { ox: number; oy: number; vx: number; vy: number; kick: number; nx: number; ny: number; size: number; rot: number; spin: number; age: number; seed: number; flower?: { white: boolean; seed: number; bud: boolean } }
+/** Floating bit: kind 0 sakura petal, 1 maple, 2 ginkgo, 3 snowflake. q = fade rank, age/landed only used by snow. */
+interface Petal { x: number; y: number; ex: number; ey: number; vx: number; vy: number; rot: number; spin: number; size: number; kind: number; q: number; age: number; landed: boolean }
+interface Pellet { x: number; y: number; ex: number; ey: number; age: number; alive: boolean }
+interface Dragonfly { x: number; y: number; ang: number; tx: number; ty: number; z: number; hue: number }
+interface Firefly { hx: number; hy: number; fx: number; fy: number; ph: number; ox: number; oy: number }
+const KIND_SEASON = [0, 2, 2, 3]; // SEASONS index each floater kind belongs to
+const KIND_COUNT = [6, 8, 5, 9];
+const PAD_FRAC = [0.55, 1, 0.6, 0.3]; // share of lotus leaves out per season
+const PAD_SCALE = [0.85, 1.15, 0.95, 0.8];
+const _k = [0, 0, 0, 0];
+const K = (a: number, b: number, c: number, d: number) => { _k[0] = a; _k[1] = b; _k[2] = c; _k[3] = d; return _k; };
 interface Plant { nx: number; ny: number; ang: number; blades: { da: number; len: number; curl: number; ph: number; shade: number }[] }
 
 export interface Drop { x: number; y: number; r: number; s: number }
@@ -89,6 +120,23 @@ export class Pond {
   pads: Pad[] = [];
   petals: Petal[] = [];
   plants: Plant[] = [];
+  pellets: Pellet[] = Array.from({ length: PELLETS }, () => ({ x: 0, y: 0, ex: 0, ey: 0, age: 0, alive: false }));
+  dragonflies: Dragonfly[] = [];
+  fireflies: Firefly[] = [];
+  /** Eased season weights (sum 1) and firefly level (0..FIREFLIES). */
+  sw: Record<Season, number> = { spring: 0, summer: 1, autumn: 0, winter: 0 };
+  private swT: Record<Season, number> = { spring: 0, summer: 1, autumn: 0, winter: 0 };
+  ffLevel = 0;
+  private ffT = 0;
+  private moodSet = false;
+  private claim = new Int8Array(9).fill(-1); // pellet each koi is after
+  private eatCd = new Float32Array(9);
+  private fx = new Float32Array(9); // where each koi was last sent
+  private fy = new Float32Array(9);
+  private baseSpeed: number[] = [];
+  private _a: Vec = { x: 0, y: 0 };
+  /** Called with the pellet position when a koi eats one (main plays a plink if sound is on). */
+  onEat?: (x: number, y: number) => void;
   under = new Mesh();
   surface = new Mesh();
   pointer: Vec | null = null;
@@ -113,6 +161,13 @@ export class Pond {
 
   get unit(): number { return Math.min(this.w, this.h); }
 
+  /** Feed the current mood (about once a second): season dressing and firefly count ease toward it. */
+  setMood(m: Pick<Mood, "season" | "seasonT" | "fireflies">): void {
+    seasonWeights(m.season, m.seasonT, this.swT);
+    this.ffT = fireflyCount(m.fireflies);
+    if (!this.moodSet) { this.moodSet = true; for (const s of SEASONS) this.sw[s] = this.swT[s]; this.ffLevel = this.ffT; }
+  }
+
   resize(w: number, h: number): void {
     const first = this.w === 0;
     const sx = first ? 1 : w / this.w, sy = first ? 1 : h / this.h;
@@ -125,6 +180,8 @@ export class Pond {
       followChain(f.pts, f.segLen);
     }
     for (const p of this.petals) { p.x *= sx; p.y *= sy; }
+    for (const p of this.pellets) { p.x *= sx; p.y *= sy; }
+    for (const d of this.dragonflies) { d.x *= sx; d.y *= sy; d.tx *= sx; d.ty *= sy; }
   }
 
   private fishLen(f: Koi): number { return 0.17 + 0.07 * ((f.p.seed % 97) / 97); }
@@ -139,20 +196,30 @@ export class Pond {
       k.segLen = k.length / (k.pts.length - 1);
       followChain(k.pts, k.segLen);
       this.fish.push(k);
+      this.baseSpeed.push(p.speed);
     }
-    const layout: [number, number, number, boolean][] = [
-      [0.86, 0.16, 1.1, true], [0.95, 0.42, 0.85, false], [0.8, 0.8, 1.2, true], [0.97, 0.97, 1.0, false],
-      [0.1, 0.92, 0.8, true], [0.58, 0.06, 0.65, false], [0.04, 0.12, 0.7, false],
+    // Lotus leaves in priority order (fewer show in spring/autumn/winter); flower 0 none, 1 bloom, 2 bud.
+    const layout: [number, number, number, number][] = [
+      [0.86, 0.16, 1.35, 1], [0.8, 0.8, 1.5, 1], [0.95, 0.42, 0.95, 2], [0.1, 0.92, 1.0, 1], [0.58, 0.06, 0.7, 0],
+      [0.97, 0.97, 1.1, 0], [0.04, 0.12, 0.8, 2], [0.5, 0.95, 0.55, 0], [0.3, 0.08, 0.5, 0],
     ];
     for (const [nx, ny, size, flower] of layout) {
       this.pads.push({
-        ox: 0, oy: 0, vx: 0, vy: 0, kick: 0, nx, ny, size, rot: r() * Math.PI * 2, spin: (r() - 0.5) * 0.02, age: r() * 0.8, seed: r(),
-        flower: flower ? { white: r() > 0.5, seed: r() } : undefined,
+        ox: 0, oy: 0, vx: 0, vy: 0, kick: 0, nx, ny, size, rot: r() * Math.PI * 2, spin: (r() - 0.5) * 0.02, age: r() * 0.5, seed: r(),
+        flower: flower ? { white: r() > 0.6, seed: r(), bud: flower === 2 } : undefined,
       });
     }
-    for (let i = 0; i < 16; i++) {
-      this.petals.push({ ex: 0, ey: 0, x: r() * this.w, y: r() * this.h, vx: (r() - 0.3) * 6, vy: (r() - 0.5) * 4, rot: r() * 6.28, spin: (r() - 0.5) * 0.3, size: 0.6 + r() * 0.5 });
-    }
+    KIND_COUNT.forEach((n, kind) => {
+      for (let i = 0; i < n; i++) {
+        const leaf = kind === 1 || kind === 2;
+        this.petals.push({
+          ex: 0, ey: 0, x: r() * this.w, y: r() * this.h, vx: (r() - 0.3) * (leaf ? 8 : 6), vy: (r() - 0.5) * 4, rot: r() * 6.28,
+          spin: (r() - 0.5) * (leaf ? 1.6 : kind === 3 ? 0.2 : 0.3), size: 0.6 + r() * 0.5, kind, q: (i + r()) / n, age: r() * SNOW_LIFE, landed: false,
+        });
+      }
+    });
+    for (let i = 0; i < 2; i++) this.dragonflies.push({ x: r() * this.w, y: r() * this.h, ang: r() * 6.28, tx: r() * this.w, ty: r() * this.h, z: 1, hue: i });
+    for (let i = 0; i < FIREFLIES; i++) this.fireflies.push({ hx: 0.08 + r() * 0.84, hy: 0.08 + r() * 0.84, fx: 0.15 + r() * 0.3, fy: 0.12 + r() * 0.3, ph: r() * 6.28, ox: 0, oy: 0 });
     const clumps: [number, number, number][] = [[-0.02, 0.3, 0.15], [-0.02, 0.62, -0.1], [0.35, 1.02, -1.45], [0.62, -0.02, 1.7]];
     for (const [nx, ny, ang] of clumps) {
       this.plants.push({
@@ -181,9 +248,111 @@ export class Pond {
   tap(x: number, y: number): void {
     if (this.t - this.lastFeed < 1.5) return;
     this.lastFeed = this.t;
+    this.dropFood(x, y);
     const n = 1 + Math.floor(this.rand() * 3);
     const near = this.fish.filter((f) => !f.feeding).sort((a, b) => Math.hypot(a.head.x - x, a.head.y - y) - Math.hypot(b.head.x - x, b.head.y - y));
     for (const f of near.slice(0, n)) f.feed(x, y, 4 + this.rand() * 2.5);
+  }
+
+  /** Drop 3-5 food pellets around a point (the pool holds PELLETS; extras are skipped). Returns how many landed. */
+  dropFood(x: number, y: number): number {
+    const n = 3 + Math.floor(this.rand() * 3), sp = this.unit * 0.05;
+    let made = 0;
+    for (const p of this.pellets) {
+      if (made === n) break;
+      if (p.alive) continue;
+      p.x = x + (this.rand() - 0.5) * sp * 2; p.y = y + (this.rand() - 0.5) * sp * 2;
+      p.ex = (this.rand() - 0.5) * sp; p.ey = (this.rand() - 0.5) * sp; p.age = 0; p.alive = true;
+      made++;
+    }
+    return made;
+  }
+
+  /** Summed disturbance push on a floating point (written into a shared scratch vector). */
+  private push(x: number, y: number): Vec {
+    let ax = 0, ay = 0;
+    for (let i = 0; i < DISTURBANCES; i++) {
+      if (this.dAge[i] >= DISTURB_LIFE) continue;
+      nudge(x - this.dX[i], y - this.dY[i], this.dAge[i], this.dS[i], this.dR[i], _n);
+      ax += _n.x; ay += _n.y;
+    }
+    this._a.x = ax; this._a.y = ay;
+    return this._a;
+  }
+
+  private updateFood(dt: number): void {
+    const U = this.unit, drag = Math.exp(-dt * 1.5), pe = this.pellets;
+    for (const p of pe) {
+      if (!p.alive) continue;
+      p.age += dt;
+      if (p.age > PELLET_LIFE) { p.alive = false; continue; }
+      const a = this.push(p.x, p.y);
+      p.ex = (p.ex + a.x * U * 0.08 * dt) * drag; p.ey = (p.ey + a.y * U * 0.08 * dt) * drag;
+      p.x += (p.ex + Math.sin(this.t * 0.3 + p.y * 0.02) * 1.2) * dt;
+      p.y += (p.ey + Math.cos(this.t * 0.27 + p.x * 0.02) * 1.2) * dt;
+    }
+    // Each koi that is feeding goes for the nearest pellet nobody else has claimed, one at a time.
+    for (let i = 0; i < this.fish.length && i < this.claim.length; i++) {
+      const f = this.fish[i];
+      this.eatCd[i] -= dt;
+      let c = this.claim[i];
+      if (c >= 0 && !pe[c].alive) c = -1;
+      if (c < 0 && f.feeding) {
+        let best = 1e18;
+        for (let j = 0; j < pe.length; j++) {
+          if (!pe[j].alive || this.claim.includes(j)) continue;
+          const d = Math.hypot(pe[j].x - f.head.x, pe[j].y - f.head.y);
+          if (d < best) { best = d; c = j; }
+        }
+      }
+      this.claim[i] = c;
+      if (c < 0) continue;
+      const p = pe[c], d = Math.hypot(p.x - f.head.x, p.y - f.head.y);
+      if (this.eatCd[i] <= 0 && d < f.length * 0.35) {
+        p.alive = false; this.claim[i] = -1; this.eatCd[i] = 0.7;
+        this.splash(p.x, p.y, 0.14, U * 0.006);
+        this.onEat?.(p.x, p.y);
+      } else if (!f.feeding || Math.hypot(p.x - this.fx[i], p.y - this.fy[i]) > f.length * 0.2) {
+        f.feed(p.x, p.y, 3); this.fx[i] = p.x; this.fy[i] = p.y; // retarget (also when the pellet drifted)
+      }
+    }
+  }
+
+  /** Dragonflies cruise to a spot, drop to the surface (z 1 -> 0), touch it (a small ripple) and pick the next spot. */
+  private updateDragonflies(dt: number): void {
+    if (this.sw.summer < 0.02) return;
+    const U = this.unit, r = this.rand;
+    for (const d of this.dragonflies) {
+      const dist = Math.hypot(d.tx - d.x, d.ty - d.y);
+      d.z = clamp01((dist - U * 0.04) / (U * 0.14));
+      const want = Math.atan2(d.ty - d.y, d.tx - d.x), lim = dt * 5;
+      d.ang += Math.max(-lim, Math.min(lim, wrapAngle(want - d.ang)));
+      const sp = U * 0.3 * (0.5 + 0.5 * d.z);
+      d.x += Math.cos(d.ang) * sp * dt; d.y += Math.sin(d.ang) * sp * dt;
+      if (dist < U * 0.04) {
+        if (this.sw.summer > 0.3) this.splash(d.x, d.y, 0.22, U * 0.008);
+        const a = r() * 6.283, l = U * (0.3 + r() * 0.3);
+        d.tx = Math.max(this.w * 0.08, Math.min(this.w * 0.92, d.x + Math.cos(a) * l));
+        d.ty = Math.max(this.h * 0.08, Math.min(this.h * 0.92, d.y + Math.sin(a) * l));
+      }
+    }
+  }
+
+  /** Fireflies wander on slow loops, shy away from the pointer and drift back. */
+  private updateFireflies(dt: number): void {
+    if (this.ffLevel < 0.01) return;
+    const U = this.unit, p = this.pointer, k = Math.exp(-dt * 0.6);
+    for (const f of this.fireflies) {
+      let ox = f.ox, oy = f.oy;
+      if (p) {
+        const x = f.hx * this.w + Math.sin(this.t * f.fx + f.ph) * U * 0.1 + ox, y = f.hy * this.h + Math.cos(this.t * f.fy + f.ph * 1.7) * U * 0.08 + oy;
+        const dx = x - p.x, dy = y - p.y, d = Math.hypot(dx, dy) || 1;
+        if (d < U * 0.28) { const s = (1 - d / (U * 0.28)) * U * 0.6 * dt; ox += (dx / d) * s; oy += (dy / d) * s; }
+      }
+      const m = U * 0.35, l = Math.hypot(ox, oy);
+      if (l > m) { ox *= m / l; oy *= m / l; }
+      f.ox = ox * k; f.oy = oy * k;
+    }
   }
 
   update(dt: number): void {
@@ -208,13 +377,23 @@ export class Pond {
     }
     for (let i = 0; i < DISTURBANCES; i++) this.dAge[i] += dt;
     const m = 20, U = this.unit, drag = Math.exp(-dt * 1.5), maxOff = U * 0.012;
+    // Season dressing and fireflies ease toward the mood (cross-fade, no popping); winter makes the koi sleepier.
+    const ek = Math.min(1, dt * 0.7);
+    for (const s of SEASONS) this.sw[s] += (this.swT[s] - this.sw[s]) * ek;
+    this.ffLevel += (this.ffT - this.ffLevel) * Math.min(1, dt * 0.8);
+    this.fish.forEach((f, i) => { f.p.speed = this.baseSpeed[i] * (1 - 0.4 * this.sw.winter); });
+    this.updateFood(dt);
+    this.updateDragonflies(dt);
+    this.updateFireflies(dt);
     for (const p of this.petals) {
-      let ax = 0, ay = 0;
-      for (let i = 0; i < DISTURBANCES; i++) {
-        if (this.dAge[i] >= DISTURB_LIFE) continue;
-        nudge(p.x - this.dX[i], p.y - this.dY[i], this.dAge[i], this.dS[i], this.dR[i], _n);
-        ax += _n.x; ay += _n.y;
+      const w = this.sw[SEASONS[KIND_SEASON[p.kind]]];
+      if (w < 0.01) continue;
+      if (p.kind === 3) {
+        p.age += dt;
+        if (p.age >= SNOW_LIFE) { p.age = 0; p.landed = false; p.x = this.rand() * this.w; p.y = this.rand() * this.h; }
+        else if (!p.landed && p.age >= SNOW_FALL) { p.landed = true; if (w > 0.3) this.splash(p.x, p.y, 0.1, U * 0.005); }
       }
+      const a = this.push(p.x, p.y), ax = a.x, ay = a.y;
       p.ex = (p.ex + ax * U * 0.08 * dt) * drag; p.ey = (p.ey + ay * U * 0.08 * dt) * drag;
       p.x += (p.vx + p.ex + Math.sin(this.t * 0.2 + p.y * 0.01) * 3) * dt;
       p.y += (p.vy + p.ey + Math.cos(this.t * 0.17 + p.x * 0.01) * 3) * dt;
@@ -247,8 +426,29 @@ export class Pond {
     under.n = 0; surf.n = 0;
     const sh = U * 0.012;
 
+    // Season mix: how many lotus leaves are out and how big, per pad.
+    let padVis = 0, padSc = 0;
+    SEASONS.forEach((s, i) => { padVis += this.sw[s] * PAD_FRAC[i]; padSc += this.sw[s] * PAD_SCALE[i]; });
+    const np = this.pads.length, padA = (i: number) => clamp01(padVis * np - i + 0.5);
+
     // Pad shadows on the floor.
-    for (const p of this.pads) under.sprite(p.nx * this.w + p.ox + sh * 2.5, p.ny * this.h + p.oy + sh * 3, p.size * U * 0.1, 0, [4, 0, 0, 0.35]);
+    this.pads.forEach((p, i) => {
+      const a = padA(i);
+      if (a > 0.01) under.sprite(p.nx * this.w + p.ox + sh * 2.5, p.ny * this.h + p.oy + sh * 3, p.size * padSc * U * 0.1 * (0.7 + 0.3 * a), 0, K(4, 0, 0, 0.35 * a));
+    });
+    // Firefly reflections: drawn under the water so the ripples distort them.
+    this.fireflyPos((_i, x, y, a, ph) => under.sprite(x, y + U * 0.014, U * 0.05, 0, K(9, 1, ph, a * 0.5)));
+    // Blooms, buds, dragonflies and food cast soft shadows.
+    const bloomW = this.sw.summer, budW = Math.min(1, this.sw.summer + this.sw.spring * 0.6);
+    this.pads.forEach((p, i) => {
+      if (!p.flower) return;
+      const a = padA(i) * (p.flower.bud ? itemAlpha(budW, p.flower.seed) : itemAlpha(bloomW, p.flower.seed));
+      if (a < 0.01) return;
+      const r = p.size * padSc * U * 0.1, ang = p.rot + 2.4;
+      under.sprite(p.nx * this.w + p.ox + Math.cos(ang) * r * 0.3 + sh * 3, p.ny * this.h + p.oy + Math.sin(ang) * r * 0.3 + sh * 4.5, r * (p.flower.bud ? 0.22 : 0.45), 0, K(4, 0, 0, 0.3 * a));
+    });
+    if (this.sw.summer > 0.02) for (const d of this.dragonflies) under.sprite(d.x + sh * (1 + d.z * 6), d.y + sh * (1.5 + d.z * 9), U * 0.03, d.ang, K(4, 0, 0, 0.22 * this.sw.summer * (1 - 0.5 * d.z)));
+    for (const p of this.pellets) if (p.alive) under.sprite(p.x + sh * 0.5, p.y + sh * 0.8, U * 0.007, 0, K(4, 0, 0, 0.3));
 
     // Fish shadows.
     const fish = [...this.fish].sort((a, b) => b.depth - a.depth);
@@ -316,16 +516,44 @@ export class Pond {
     }
 
     // Surface: pads, flowers, petals (bob with the ripples in the vertex shader).
-    for (const p of this.pads) {
-      const x = p.nx * this.w + p.ox, y = p.ny * this.h + p.oy, r = p.size * U * 0.1;
-      surf.sprite(x, y, r, p.rot, [6, p.seed, p.age, 0]);
+    const aged = this.sw.autumn * 0.5 + this.sw.winter * 0.3;
+    this.pads.forEach((p, i) => {
+      const a = padA(i);
+      if (a > 0.01) surf.sprite(p.nx * this.w + p.ox, p.ny * this.h + p.oy, p.size * padSc * U * 0.1 * (0.7 + 0.3 * a), p.rot, K(6, p.seed, Math.min(1, p.age * 0.5 + aged), a));
+    });
+    this.pads.forEach((p, i) => {
+      if (!p.flower) return;
+      const bud = p.flower.bud, a = padA(i) * itemAlpha(bud ? budW : bloomW, p.flower.seed);
+      if (a < 0.01) return;
+      const r = p.size * padSc * U * 0.1, ang = p.rot + 2.4;
+      const fx = p.nx * this.w + p.ox + Math.cos(ang) * r * 0.3, fy = p.ny * this.h + p.oy + Math.sin(ang) * r * 0.3;
+      if (bud) surf.sprite(fx, fy, r * 0.22, p.rot + 0.8, K(12, 0, 0, a));
+      else surf.sprite(fx, fy, r * 0.5 * (0.6 + 0.4 * a), p.rot * 0.5, K(7, p.flower.seed, p.flower.white ? 1 : 0, a));
+    });
+    for (const p of this.petals) {
+      const w = this.sw[SEASONS[KIND_SEASON[p.kind]]];
+      let a = itemAlpha(w, p.q), r = U * p.size * (p.kind === 0 ? 0.016 : p.kind === 1 ? 0.034 : p.kind === 2 ? 0.028 : 0.013);
+      if (a < 0.01) continue;
+      if (p.kind === 3) { // snowflake: grows and dims while still falling, melts away at the end of its life
+        const z = p.landed ? 0 : 1 - p.age / SNOW_FALL;
+        r *= 1 + z * 0.8; a *= (1 - 0.6 * z) * clamp01((SNOW_LIFE - p.age) / 1.5);
+      }
+      surf.sprite(p.x, p.y, r, p.rot, K(8, p.kind, p.q, a));
     }
-    for (const p of this.pads) {
-      if (!p.flower) continue;
-      const r = p.size * U * 0.1, a = p.rot + 2.4;
-      const fx = p.nx * this.w + p.ox + Math.cos(a) * r * 0.3, fy = p.ny * this.h + p.oy + Math.sin(a) * r * 0.3;
-      surf.sprite(fx, fy, r * 0.5, p.rot * 0.5, [7, p.flower.seed, p.flower.white ? 1 : 0, 0]);
+    for (const p of this.pellets) {
+      if (!p.alive) continue;
+      surf.sprite(p.x, p.y, U * 0.0075, p.age * 0.3, K(11, 0, 0, clamp01(p.age / 0.3) * clamp01((PELLET_LIFE - p.age) / 2)));
     }
-    for (const p of this.petals) surf.sprite(p.x, p.y, U * 0.014 * p.size, p.rot, [8, 0, 0, 0]);
+    if (this.sw.summer > 0.02) for (const d of this.dragonflies) surf.sprite(d.x, d.y, U * 0.034 * (1 + d.z * 0.5), d.ang, K(10, 0, d.hue, this.sw.summer));
+    this.fireflyPos((_i, x, y, a, ph) => surf.sprite(x, y, U * 0.038, 0, K(9, 0, ph, a)));
+  }
+
+  /** Visits each visible firefly with its position, alpha (from the eased count) and flicker phase. */
+  private fireflyPos(cb: (i: number, x: number, y: number, a: number, ph: number) => void): void {
+    const n = Math.ceil(this.ffLevel), U = this.unit;
+    for (let i = 0; i < n && i < this.fireflies.length; i++) {
+      const f = this.fireflies[i], a = clamp01(this.ffLevel - i);
+      cb(i, f.hx * this.w + Math.sin(this.t * f.fx + f.ph) * U * 0.1 + f.ox, f.hy * this.h + Math.cos(this.t * f.fy + f.ph * 1.7) * U * 0.08 + f.oy, a, f.ph / 6.28);
+    }
   }
 }
