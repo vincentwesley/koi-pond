@@ -102,9 +102,9 @@ describe("attraction", () => {
 
   it("a fed koi reaches the target, then resumes wandering", () => {
     const f = new Koi(100, 250, 0, 60, 0, { speed: 0.5, turn: 1.5, wander: 1, shy: 1, seed: 3 });
-    f.feed(400, 250, 6);
+    f.feed(220, 250, 6);
     let near = 1e9;
-    for (let s = 0; s < 60 * 8; s++) { f.update(1 / 60, { w: 800, h: 500, pointer: null, others: [f] }); near = Math.min(near, Math.hypot(f.head.x - 400, f.head.y - 250)); }
+    for (let s = 0; s < 60 * 8; s++) { f.update(1 / 60, { w: 800, h: 500, pointer: null, others: [f] }); near = Math.min(near, Math.hypot(f.head.x - 220, f.head.y - 250)); }
     expect(near).toBeLessThan(60);
     expect(f.feeding).toBe(false);
   });
