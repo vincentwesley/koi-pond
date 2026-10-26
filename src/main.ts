@@ -118,7 +118,6 @@ function start(gl: WebGL2RenderingContext): void {
   soundBtn?.addEventListener("click", async () => {
     const on = await audio.toggle();
     soundBtn.setAttribute("aria-pressed", String(on));
-    soundBtn.querySelector(".label")!.textContent = on ? "Sound on" : "Sound off";
   });
 
   size();
