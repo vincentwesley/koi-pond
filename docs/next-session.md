@@ -1,6 +1,6 @@
 > Update at the end of any session that changed state. Keep it lean.
 
-Continue work on **Koi Pond** (local only, no GitHub repo yet, not deployed).
+Continue work on **Koi Pond** (public repo github.com/vincentwesley/koi-pond, live at https://vincentwesley.github.io/koi-pond/ via gh-pages).
 Built 2026-10-21; typecheck, unit tests and build green. Only do what the owner asks.
 
 ## Before anything
