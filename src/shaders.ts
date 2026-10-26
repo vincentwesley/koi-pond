@@ -185,7 +185,7 @@ void main(){
 
 export const SPRITE_FS = `${H}
 in vec2 vUv; in vec4 vK; in vec2 vC; in float vH; out vec4 o;
-uniform vec3 uWater; uniform float uTime;
+uniform vec3 uWater; uniform float uTime; uniform vec3 uLight; uniform vec4 uK; // uK.x = ambient
 ${NOISE}
 const vec3 WHITE = vec3(0.96, 0.94, 0.9), RED = vec3(0.88, 0.2, 0.08), SUMI = vec3(0.06, 0.06, 0.07);
 
@@ -280,6 +280,7 @@ void main(){
     vec3 c = skin(int(vK.y + 0.5), u, v, vK.z, metal);
     float round = sqrt(max(0.0, 1.0 - v * v));
     c *= 0.55 + 0.5 * round;
+    c *= mix(vec3(1.0), uLight * uK.x, 0.5); // koi sit under water: only half the mood light, ink stays ink
     c += (0.1 + 0.25 * metal) * exp(-v * v * 14.0) * (1.0 - u * 0.7);
     c += metal * 0.15 * sin(u * 30.0 + uTime * 0.7) * round;
     // Ink outline with a wobbling brush width (thicker at the nose and tail).
@@ -300,6 +301,7 @@ void main(){
     float ray = sin(y * 22.0 + x * 4.0);
     c *= 0.85 + 0.15 * ray;
     c = mix(c, INK, smoothstep(0.8, 1.0, ray) * 0.22 * x);
+    c *= mix(vec3(1.0), uLight * uK.x, 0.5);
     c = mix(c * 1.18, INK, edge * 0.65);
     o = underwater(c, max(a * (0.84 - 0.32 * x), edge * 0.7), vK.w * 0.7);
   } else if (kind == 3){ // soft body shadow
@@ -312,38 +314,107 @@ void main(){
     float a = (1.0 - smoothstep(0.55, 1.0, abs(uv.y))) * (1.0 - smoothstep(0.92, 1.0, uv.x));
     vec3 c = mix(vec3(0.07, 0.24, 0.1), vec3(0.3, 0.55, 0.22), (1.0 - abs(uv.y)) * 0.7 + uv.x * 0.3 + vK.y * 0.2);
     c += 0.08 * smoothstep(0.15, 0.0, abs(uv.y));
+    c *= mix(vec3(1.0), uLight * uK.x, 0.7);
     o = underwater(c, a, vK.w * (1.0 - uv.x * 0.6));
-  } else if (kind == 6){ // lily pad, notch on +x
-    float r = length(uv), ang = atan(uv.y, uv.x);
-    float a = 1.0 - smoothstep(0.95, 1.0, r);
-    a *= smoothstep(0.0, 0.03, (abs(ang) - 0.2) * r);
-    float age = vK.z;
-    vec3 c = mix(vec3(0.2, 0.38, 0.13), vec3(0.42, 0.4, 0.14), age);
-    c *= 0.82 + 0.3 * fbm(uv * 4.0 + vK.y * 9.0);
-    float vein = smoothstep(0.92, 1.0, abs(cos(ang * 9.0 + sin(r * 3.0) * 0.3)));
-    c += vec3(0.08, 0.1, 0.03) * vein * smoothstep(0.1, 0.4, r);
-    c = mix(c, c * 0.6 + vec3(0.08, 0.06, 0.0), smoothstep(0.82, 0.97, r));
-    c *= 0.9 + 0.25 * dot(normalize(vec3(uv * 0.35, 1.0)), normalize(vec3(-0.4, -0.5, 0.75)));
+  } else if (kind == 6){ // round lotus leaf: raised rim, radial veins, pale hub. k3 = alpha
+    float r = length(uv), ang = atan(uv.y, uv.x), sd = vK.y * 20.0, age = vK.z;
+    float edge = 0.965 + 0.025 * sin(ang * 5.0 + sd) + 0.01 * sin(ang * 13.0 + sd * 0.7);
+    float a = 1.0 - smoothstep(edge - 0.015, edge, r);
+    vec3 c = mix(vec3(0.15, 0.4, 0.2), vec3(0.4, 0.42, 0.14), clamp(age * 1.6, 0.0, 1.0));
+    c = mix(c, vec3(0.55, 0.36, 0.12), clamp(age * 1.4 - 0.7, 0.0, 1.0));
+    c *= 0.85 + 0.28 * fbm(uv * 3.0 + sd);
+    float vein = pow(abs(cos(ang * 11.0 + sin(r * 2.5 + sd) * 0.25)), 40.0);
+    c += vec3(0.07, 0.1, 0.04) * vein * smoothstep(0.06, 0.3, r) * (1.0 - 0.6 * smoothstep(0.7, 0.95, r));
+    c *= 0.9 + 0.12 * smoothstep(0.0, 0.7, r);
+    c = mix(c, c * vec3(1.2, 1.25, 0.95) + 0.03, 1.0 - smoothstep(0.0, 0.08, r));
+    float rim = smoothstep(edge - 0.13, edge - 0.07, r) * (1.0 - smoothstep(edge - 0.035, edge, r));
+    float lip = smoothstep(edge - 0.22, edge - 0.14, r) * (1.0 - smoothstep(edge - 0.14, edge - 0.09, r));
+    c *= 1.0 - 0.2 * lip;
+    c = mix(c, c * 1.3 + 0.03, rim * 0.8);
+    c *= 1.0 + rim * 0.3 * dot(uv / (r + 1e-3), vec2(-0.6, -0.8));
     c *= 1.0 + clamp(vH, -1.0, 1.0) * 0.25;
-    o = vec4(c * a, a);
-  } else if (kind == 7){ // water lily flower
+    c *= uLight * uK.x;
+    o = vec4(c * a, a) * vK.w;
+  } else if (kind == 7){ // lotus bloom, pointed layered petals. k1 seed, k2 white
     float r = length(uv), ang = atan(uv.y, uv.x) + vK.y * 6.0;
-    float r1 = 0.62 + 0.38 * pow(abs(cos(ang * 4.0)), 0.6);
-    float r2 = 0.42 + 0.26 * pow(abs(cos(ang * 4.0 + 0.785)), 0.6);
-    vec3 tint = vK.z > 0.5 ? vec3(1.0, 0.97, 0.95) : vec3(1.0, 0.7, 0.8);
-    vec3 c = tint * (0.7 + 0.3 * pow(abs(cos(ang * 4.0)), 2.0)) * (0.75 + 0.25 * r / r1);
-    float inner = 1.0 - smoothstep(r2 - 0.04, r2, r);
-    c = mix(c, tint * (0.9 + 0.2 * pow(abs(cos(ang * 4.0 + 0.785)), 2.0)), inner);
-    c = mix(c, vec3(1.0, 0.82, 0.25), 1.0 - smoothstep(0.14, 0.2, r));
-    float a = 1.0 - smoothstep(r1 - 0.06, r1, r);
-    o = vec4(c * a * 1.1, a);
-  } else { // drifting petal, notch at +x
-    vec2 p = uv * vec2(1.0, 1.7);
-    float a = 1.0 - smoothstep(0.85, 1.0, length(p));
-    a *= smoothstep(0.0, 0.08, abs(uv.y) - (uv.x - 0.7) * 0.9);
-    vec3 c = mix(vec3(1.0, 0.92, 0.94), vec3(0.98, 0.66, 0.74), smoothstep(-1.0, 0.8, uv.x));
+    float l1 = abs(cos(ang * 4.0)), l2 = abs(cos(ang * 4.0 + 0.785));
+    float r1 = 0.5 + 0.5 * pow(l1, 1.6), r2 = 0.34 + 0.34 * pow(l2, 1.6);
+    vec3 tint = vK.z > 0.5 ? vec3(1.0, 0.97, 0.95) : vec3(1.0, 0.68, 0.8);
+    vec3 tip = vK.z > 0.5 ? vec3(1.0, 0.86, 0.9) : vec3(0.96, 0.4, 0.62);
+    vec3 c = mix(tint, tip, smoothstep(0.35, 1.0, r / r1) * pow(l1, 1.2)) * (0.72 + 0.28 * pow(l1, 2.0));
+    float inner = 1.0 - smoothstep(r2 - 0.03, r2, r);
+    c = mix(c, mix(tint, tip, 0.45 * smoothstep(0.1, r2, r)) * (0.88 + 0.2 * pow(l2, 2.0)), inner);
+    c = mix(c, vec3(1.0, 0.82, 0.25), 1.0 - smoothstep(0.13, 0.19, r));
+    c *= uLight * uK.x;
+    float a = 1.0 - smoothstep(r1 - 0.05, r1, r);
+    o = vec4(c * a, a) * vK.w;
+  } else if (kind == 8){ // floating things. k1 type 0 sakura, 1 maple, 2 ginkgo, 3 snow; k2 variation
+    float t = floor(vK.y + 0.5), r = length(uv), ang = atan(uv.y, uv.x), vr = vK.z;
+    vec3 c; float a;
+    if (t < 0.5){ // sakura petal, notch at +x
+      vec2 p = uv * vec2(1.0, 1.7);
+      a = (1.0 - smoothstep(0.85, 1.0, length(p))) * smoothstep(0.0, 0.08, abs(uv.y) - (uv.x - 0.7) * 0.9);
+      c = mix(vec3(1.0, 0.97, 0.97), vec3(0.98, 0.78, 0.85), smoothstep(-1.0, 0.8, uv.x));
+    } else if (t < 1.5){ // maple: five pointed lobes, stem at -x
+      float c5 = cos(5.0 * ang);
+      float e = 0.55 + 0.45 * pow(0.5 + 0.5 * c5, 0.9) + 0.04 * cos(ang * 25.0);
+      a = 1.0 - smoothstep(e - 0.04, e, r);
+      a = max(a, (1.0 - smoothstep(0.03, 0.06, abs(uv.y))) * step(uv.x, -0.2) * step(-1.0, uv.x));
+      c = mix(vec3(0.72, 0.1, 0.07), vec3(0.96, 0.5, 0.1), vr);
+      c += 0.2 * smoothstep(0.95, 1.0, c5) * (1.0 - r);
+      c *= 0.88 + 0.16 * fbm(uv * 4.0 + vr * 9.0);
+    } else if (t < 2.5){ // ginkgo fan, stem at -x
+      vec2 p = uv - vec2(-0.75, 0.0);
+      float fr = length(p) / 1.75, fa = atan(p.y, p.x);
+      a = (1.0 - smoothstep(0.93, 1.0, fr + 0.03 * sin(fa * 18.0))) * (1.0 - smoothstep(1.0, 1.1, abs(fa)));
+      a *= 1.0 - 0.8 * (1.0 - smoothstep(0.0, 0.1, abs(fa))) * smoothstep(0.5, 0.75, fr);
+      c = mix(vec3(0.95, 0.74, 0.14), vec3(0.98, 0.88, 0.3), vr) * (0.9 + 0.1 * sin(fa * 16.0));
+    } else { // snowflake: six soft arms
+      float arm = 0.1 + 0.9 * pow(abs(cos(3.0 * ang)), 7.0);
+      a = (1.0 - smoothstep(arm * 0.9, arm, r)) * 0.9 + (1.0 - smoothstep(0.0, 0.4, r)) * 0.4;
+      c = vec3(0.92, 0.96, 1.0);
+    }
     c *= 1.0 + clamp(vH, -1.0, 1.0) * 0.2;
-    o = vec4(c * a, a * 0.95);
+    c *= t > 2.5 ? mix(vec3(1.0), uLight * uK.x, 0.6) : uLight * uK.x;
+    o = vec4(c * a, a * 0.95) * vK.w;
+  } else if (kind == 9){ // firefly glow (k1 0) or its water reflection (k1 1); additive. k2 flicker phase, k3 level
+    float r = length(uv);
+    float fl = 0.75 + 0.25 * sin(uTime * 2.3 + vK.z * 40.0) * sin(uTime * 0.9 + vK.z * 17.0);
+    vec3 c = vec3(0.31, 0.88, 0.63);
+    float g = exp(-r * r * 7.0) * 0.55 + exp(-r * r * 90.0) * 1.1;
+    if (vK.y > 0.5){ g = exp(-r * r * 5.0) * 0.3; }
+    o = vec4(mix(c, vec3(0.85, 1.0, 0.9), exp(-r * r * 120.0)) * g * fl * vK.w, 0.0);
+  } else if (kind == 10){ // dragonfly seen from above, heading +x. k2 hue, k3 alpha
+    float x = uv.x, y = uv.y;
+    float body = (1.0 - smoothstep(0.07, 0.1, abs(y))) * step(-0.95, x) * step(x, 0.7);
+    float head = 1.0 - smoothstep(0.07, 0.1, length(vec2(x - 0.72, y) * vec2(1.0, 1.0)));
+    float wing = 0.0;
+    for (int i = 0; i < 2; i++){
+      float cx = 0.3 - 0.22 * float(i);
+      vec2 w = vec2((x - cx) * 0.9 - abs(y) * 0.25, (abs(y) - 0.45) * 1.9);
+      wing = max(wing, 1.0 - smoothstep(0.55, 0.62, length(w)));
+    }
+    wing *= smoothstep(0.04, 0.12, abs(y));
+    float fl = 0.8 + 0.2 * sin(uTime * 40.0 + vK.z * 9.0);
+    vec3 bc = mix(vec3(0.12, 0.5, 0.78), vec3(0.78, 0.2, 0.18), step(0.5, vK.z)) * (0.8 + 0.4 * smoothstep(0.0, 0.5, x));
+    vec3 wc = vec3(0.8, 0.92, 1.0) * (0.85 + 0.15 * sin(y * 30.0 + x * 12.0));
+    float a = max(max(body, head), wing * 0.3 * fl);
+    vec3 c = (body + head > 0.4 ? bc : wc) * uLight * uK.x;
+    o = vec4(c * a, a) * vK.w;
+  } else if (kind == 11){ // koi food pellet. k3 alpha
+    float r = length(uv);
+    float a = 1.0 - smoothstep(0.8, 1.0, r);
+    vec3 c = mix(vec3(0.7, 0.48, 0.2), vec3(0.95, 0.78, 0.45), smoothstep(0.7, -0.2, r - 0.35 * uv.x - 0.35 * uv.y));
+    c *= uLight * uK.x * (1.0 + clamp(vH, -1.0, 1.0) * 0.3);
+    o = vec4(c * a, a) * vK.w;
+  } else { // 12: lotus bud, tip at +x. k3 alpha
+    float x = uv.x;
+    float w = 0.62 * sqrt(max(0.0, (1.0 + x) * 0.5)) * (1.0 - x) * 1.1;
+    float a = (1.0 - smoothstep(w - 0.06, w, abs(uv.y))) * step(-1.0, x) * step(x, 1.0);
+    vec3 c = mix(vec3(0.3, 0.52, 0.28), vec3(1.0, 0.62, 0.76), smoothstep(-0.25, 0.45, x));
+    c *= 0.82 + 0.3 * smoothstep(0.5, 0.0, abs(uv.y));
+    c *= uLight * uK.x;
+    o = vec4(c * a, a) * vK.w;
   }
 }`;
 
@@ -375,9 +446,12 @@ void main(){
   float sp = pow(max(dot(n, Hv), 0.0), 220.0);
   c += uLight * sp * 1.6 * uK.y;
   vec2 m = vec2(vUv.x - 0.72 + n.x * 0.7 + breeze.x * 0.05, vUv.y - 0.55 + n.y * 0.3);
-  float streak = exp(-m.x * m.x * 2600.0) * exp(-m.y * m.y * 4.0) * smoothstep(0.0, 0.3, 0.95 - vUv.y);
-  float broken = 0.25 + 0.75 * smoothstep(0.3, 0.85, vnoise(vec2(px.x / 12.0 + hx * 120.0, px.y / 4.0 + hy * 120.0 + uTime * 0.7)));
-  c += vec3(0.78, 0.86, 1.0) * streak * broken * uK.z * 0.5;
+  // A smooth column that widens toward the viewer, swayed by the ripples and softly broken into long glints.
+  float dy = 0.55 - vUv.y, wid = 0.014 + 0.05 * clamp(dy, 0.0, 1.0);
+  float sx = vUv.x - 0.72 + n.x * 0.35 + breeze.x * 0.06 + 0.012 * sin(dy * 14.0 + uTime * 0.6);
+  float streak = exp(-sx * sx / (wid * wid)) * smoothstep(-0.04, 0.12, dy) * (1.0 - smoothstep(0.3, 0.95, dy));
+  float broken = 0.4 + 0.6 * smoothstep(0.2, 0.8, fbm(vec2(px.x / 90.0 + hx * 14.0, px.y / 14.0 + hy * 14.0 + uTime * 0.35)));
+  c += vec3(0.78, 0.86, 1.0) * streak * broken * uK.z * 0.42;
   c += vec3(0.85, 0.92, 1.0) * exp(-dot(m, m) * 9000.0) * uK.z * 0.5;
   // Winter: a thin frosted crust at the shore, with hairline cracks.
   float ice = smoothstep(0.0, 0.05, uK.w) * (1.0 - smoothstep(0.02 + 0.14 * uK.w, 0.06 + 0.2 * uK.w, dep + 0.08 * (fbm(px / 40.0) - 0.5)));
