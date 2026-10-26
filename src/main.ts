@@ -93,7 +93,7 @@ function start(gl: WebGL2RenderingContext): void {
     pond.splash(x, y, s, Math.min(pond.w, pond.h) * 0.02);
     audio.plink(Math.abs(s), (x / pond.w) * 2 - 1);
   };
-  canvas.addEventListener("pointerdown", (e) => {
+  if (!reduced) canvas.addEventListener("pointerdown", (e) => {
     const p = local(e);
     canvas.setPointerCapture(e.pointerId);
     lastDrop = p;
@@ -103,7 +103,7 @@ function start(gl: WebGL2RenderingContext): void {
   });
   // Browser took the gesture (pan-y scroll) or it was interrupted: forget the pointer.
   canvas.addEventListener("pointercancel", () => { clearTimeout(idle); pond.pointer = null; });
-  canvas.addEventListener("pointermove", (e) => {
+  if (!reduced) canvas.addEventListener("pointermove", (e) => {
     const p = local(e), pressed = e.buttons !== 0;
     if (!pressed && e.pointerType !== "mouse") return;
     const gap = Math.min(pond.w, pond.h) * (pressed ? 0.015 : 0.03);
