@@ -1,16 +1,19 @@
 // WebGL2 pipeline: ripple sim -> floor+caustics -> underwater sprites -> water surface -> surface sprites -> bloom -> screen.
 
-import { program, target, freeTarget, type Prog, type Target } from "./gl";
+import { program, target, freeTarget, halfFloatTargets, type Prog, type Target } from "./gl";
 import * as S from "./shaders";
 import { STRIDE, type Mesh, type Pond } from "./scene";
 
 const CELL = 4; // css px per ripple cell
 const SIM_DT = 1 / 120;
+const MAX_DROPS = 32;
 const WATER: [number, number, number] = [0.07, 0.25, 0.22];
 
 export class Renderer {
   scale = 1;
-  private float: boolean;
+  private half: boolean; // RGBA16F targets usable (scene/bloom)
+  private packed: boolean; // ripple state in packed RGBA8 instead of RG16F
+  private drops = new Float32Array(MAX_DROPS * 4);
   private P: Record<"sim" | "floor" | "under" | "sprite" | "water" | "bright" | "blur" | "final", Prog>;
   private vao: WebGLVertexArrayObject;
   private spriteVao: WebGLVertexArrayObject;
@@ -26,13 +29,16 @@ export class Renderer {
   private acc = 0;
   private time = 0;
 
-  constructor(private gl: WebGL2RenderingContext, private dprCap: number) {
-    this.float = !!gl.getExtension("EXT_color_buffer_float");
-    const fs = (src: string) => program(gl, S.FS_VS, src);
+  /** opts.forceNoFloat: pretend RGBA16F is unusable (exercises the packed RGBA8 ripple path). */
+  constructor(private gl: WebGL2RenderingContext, private dprCap: number, opts: { forceNoFloat?: boolean } = {}) {
+    this.half = !opts.forceNoFloat && halfFloatTargets(gl);
+    this.packed = !this.half;
+    const m = (src: string) => (this.packed ? S.packed(src) : src);
+    const fs = (src: string) => program(gl, S.FS_VS, m(src));
     this.P = {
-      sim: fs(S.SIM_FS), floor: fs(S.FLOOR_FS), under: fs(S.UNDER_FS), water: fs(S.WATER_FS),
-      bright: fs(S.BRIGHT_FS), blur: fs(S.BLUR_FS), final: fs(S.FINAL_FS),
-      sprite: program(gl, S.SPRITE_VS, S.SPRITE_FS),
+      sim: fs(S.SIM_FS), floor: program(gl, S.FS_VS, S.FLOOR_FS), under: fs(S.UNDER_FS), water: fs(S.WATER_FS),
+      bright: program(gl, S.FS_VS, S.BRIGHT_FS), blur: program(gl, S.FS_VS, S.BLUR_FS), final: program(gl, S.FS_VS, S.FINAL_FS),
+      sprite: program(gl, m(S.SPRITE_VS), S.SPRITE_FS),
     };
     this.vao = gl.createVertexArray()!;
     this.spriteVao = gl.createVertexArray()!;
@@ -62,15 +68,16 @@ export class Renderer {
     if (simChanged) {
       this.sim.forEach((t) => freeTarget(gl, t));
       const sw = Math.min(512, Math.ceil(cssW / CELL)), shh = Math.min(512, Math.ceil(cssH / CELL));
-      this.sim = [target(gl, sw, shh, this.float), target(gl, sw, shh, this.float)];
+      const mk = () => this.packed ? target(gl, sw, shh, false, true, [128 / 255, 0, 128 / 255, 0]) : target(gl, sw, shh, true);
+      this.sim = [mk(), mk()];
     }
     for (const t of [this.floor, this.under, this.scene, this.bloomA, this.bloomB]) freeTarget(gl, t);
     this.floor = target(gl, w, h, false);
     this.under = target(gl, w, h, false);
-    this.scene = target(gl, w, h, this.float);
+    this.scene = target(gl, w, h, this.half);
     const bw = Math.max(1, w >> 2), bh = Math.max(1, h >> 2);
-    this.bloomA = target(gl, bw, bh, this.float);
-    this.bloomB = target(gl, bw, bh, this.float);
+    this.bloomA = target(gl, bw, bh, this.half);
+    this.bloomB = target(gl, bw, bh, this.half);
     this.pass(this.P.floor, this.floor, (p) => {
       gl.uniform2f(p.u("uRes"), cssW, cssH);
       gl.uniform1f(p.u("uScale"), this.patternScale());
@@ -103,22 +110,27 @@ export class Renderer {
   }
 
   private stepSim(pond: Pond, steps: number): void {
-    const gl = this.gl, [a] = this.sim, sw = a.w, sh = a.h;
-    const drops = new Float32Array(32 * 4);
-    const list = pond.drops.splice(0, 32);
-    pond.drops.length = 0; // anything beyond 32 this frame is dropped
-    list.forEach((d, i) => drops.set([(d.x / this.cssW) * sw, (1 - d.y / this.cssH) * sh, Math.max(1.5, d.r / CELL), d.s], i * 4));
+    const gl = this.gl, sw = this.sim[0].w, sh = this.sim[0].h, p = this.P.sim, drops = this.drops;
+    const n = Math.min(pond.drops.length, MAX_DROPS); // anything beyond 32 this frame is dropped
+    for (let i = 0; i < n; i++) {
+      const d = pond.drops[i], k = i * 4;
+      drops[k] = (d.x / this.cssW) * sw; drops[k + 1] = (1 - d.y / this.cssH) * sh; drops[k + 2] = Math.max(1.5, d.r / CELL); drops[k + 3] = d.s;
+    }
+    pond.drops.length = 0;
+    gl.useProgram(p.p);
+    gl.bindVertexArray(this.vao);
+    gl.viewport(0, 0, sw, sh);
+    gl.uniform2f(p.u("uTexel"), 1 / sw, 1 / sh);
+    gl.uniform2f(p.u("uSize"), sw, sh);
+    gl.uniform1f(p.u("uDamp"), 0.986);
+    gl.uniform4fv(p.u("uDrops"), drops);
     for (let i = 0; i < steps; i++) {
       const [src, dst] = this.sim;
-      this.pass(this.P.sim, dst, (p) => {
-        this.bindTex(p, "uState", 0, src.tex);
-        gl.uniform2f(p.u("uTexel"), 1 / sw, 1 / sh);
-        gl.uniform2f(p.u("uSize"), sw, sh);
-        gl.uniform1f(p.u("uDamp"), 0.986);
-        gl.uniform4fv(p.u("uDrops"), drops);
-        gl.uniform1i(p.u("uDropN"), i === 0 ? list.length : 0);
-      });
-      this.sim = [dst, src];
+      gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fb);
+      this.bindTex(p, "uState", 0, src.tex);
+      gl.uniform1i(p.u("uDropN"), i === 0 ? n : 0);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      this.sim[0] = dst; this.sim[1] = src;
     }
   }
 
@@ -145,12 +157,11 @@ export class Renderer {
     const gl = this.gl;
     if (!this.under || !this.scene || !this.floor || !this.bloomA || !this.bloomB) return;
     this.time += dt;
-    // Fixed-step ripples (ripples need float targets; without them the water stays calm).
+    // Fixed-step ripples.
     this.acc = Math.min(this.acc + dt, SIM_DT * 4);
     let steps = 0;
     while (this.acc >= SIM_DT) { this.acc -= SIM_DT; steps++; }
-    if (this.float && steps) this.stepSim(pond, steps);
-    else if (!this.float) pond.drops.length = 0;
+    if (steps) this.stepSim(pond, steps);
 
     pond.build();
     const rip = this.sim[0], cw = this.cssW, ch = this.cssH, ps = this.patternScale();
