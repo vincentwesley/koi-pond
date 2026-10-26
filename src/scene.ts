@@ -80,7 +80,8 @@ interface Pellet { x: number; y: number; ex: number; ey: number; age: number; al
 interface Dragonfly { x: number; y: number; ang: number; tx: number; ty: number; z: number; hue: number }
 interface Firefly { hx: number; hy: number; fx: number; fy: number; ph: number; ox: number; oy: number }
 const KIND_SEASON = [0, 2, 2, 3]; // SEASONS index each floater kind belongs to
-const KIND_COUNT = [6, 8, 5, 9];
+const KIND_COUNT = [16, 8, 5, 18];
+const CLUSTERS = [[0.25, 0.3], [0.7, 0.65], [0.45, 0.85]]; // where a few sakura petals start bunched
 const PAD_FRAC = [0.55, 1, 0.6, 0.3]; // share of lotus leaves out per season
 const PAD_SCALE = [0.85, 1.15, 0.95, 0.8];
 const _k = [0, 0, 0, 0];
@@ -212,8 +213,9 @@ export class Pond {
     KIND_COUNT.forEach((n, kind) => {
       for (let i = 0; i < n; i++) {
         const leaf = kind === 1 || kind === 2;
+        const cl = kind === 0 && i < 9 ? CLUSTERS[i % 3] : null;
         this.petals.push({
-          ex: 0, ey: 0, x: r() * this.w, y: r() * this.h, vx: (r() - 0.3) * (leaf ? 8 : 6), vy: (r() - 0.5) * 4, rot: r() * 6.28,
+          ex: 0, ey: 0, x: cl ? (cl[0] + (r() - 0.5) * 0.12) * this.w : r() * this.w, y: cl ? (cl[1] + (r() - 0.5) * 0.12) * this.h : r() * this.h, vx: (r() - 0.3) * (leaf ? 8 : 6), vy: (r() - 0.5) * 4, rot: r() * 6.28,
           spin: (r() - 0.5) * (leaf ? 1.6 : kind === 3 ? 0.2 : 0.3), size: 0.6 + r() * 0.5, kind, q: (i + r()) / n, age: r() * SNOW_LIFE, landed: false,
         });
       }
@@ -532,7 +534,7 @@ export class Pond {
     });
     for (const p of this.petals) {
       const w = this.sw[SEASONS[KIND_SEASON[p.kind]]];
-      let a = itemAlpha(w, p.q), r = U * p.size * (p.kind === 0 ? 0.016 : p.kind === 1 ? 0.034 : p.kind === 2 ? 0.028 : 0.013);
+      let a = itemAlpha(w, p.q), r = U * p.size * (p.kind === 0 ? 0.027 : p.kind === 1 ? 0.034 : p.kind === 2 ? 0.028 : 0.019);
       if (a < 0.01) continue;
       if (p.kind === 3) { // snowflake: grows and dims while still falling, melts away at the end of its life
         const z = p.landed ? 0 : 1 - p.age / SNOW_FALL;
@@ -544,7 +546,7 @@ export class Pond {
       if (!p.alive) continue;
       surf.sprite(p.x, p.y, U * 0.0075, p.age * 0.3, K(11, 0, 0, clamp01(p.age / 0.3) * clamp01((PELLET_LIFE - p.age) / 2)));
     }
-    if (this.sw.summer > 0.02) for (const d of this.dragonflies) surf.sprite(d.x, d.y, U * 0.034 * (1 + d.z * 0.5), d.ang, K(10, 0, d.hue, this.sw.summer));
+    if (this.sw.summer > 0.02) for (const d of this.dragonflies) surf.sprite(d.x, d.y, U * 0.026 * (1 + d.z * 0.5), d.ang, K(10, 0, d.hue, this.sw.summer));
     this.fireflyPos((_i, x, y, a, ph) => surf.sprite(x, y, U * 0.038, 0, K(9, 0, ph, a)));
   }
 

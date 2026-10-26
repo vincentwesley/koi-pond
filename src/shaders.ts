@@ -352,9 +352,10 @@ void main(){
     float t = floor(vK.y + 0.5), r = length(uv), ang = atan(uv.y, uv.x), vr = vK.z;
     vec3 c; float a;
     if (t < 0.5){ // sakura petal, notch at +x
-      vec2 p = uv * vec2(1.0, 1.7);
-      a = (1.0 - smoothstep(0.85, 1.0, length(p))) * smoothstep(0.0, 0.08, abs(uv.y) - (uv.x - 0.7) * 0.9);
-      c = mix(vec3(1.0, 0.97, 0.97), vec3(0.98, 0.78, 0.85), smoothstep(-1.0, 0.8, uv.x));
+      float tm = 0.45 + 0.55 * abs(cos(uTime * 0.7 + vr * 25.0)); // slow tumble
+      vec2 p = uv * vec2(1.0, 1.5 / tm);
+      a = (1.0 - smoothstep(0.55, 1.0, length(p))) * smoothstep(0.0, 0.2, abs(uv.y) - (uv.x - 0.75) * 0.7);
+      c = mix(vec3(1.0, 0.98, 0.98), vec3(0.98, 0.8, 0.87), smoothstep(-1.0, 0.9, uv.x));
     } else if (t < 1.5){ // maple: five pointed lobes, stem at -x
       float c5 = cos(5.0 * ang);
       float e = 0.55 + 0.45 * pow(0.5 + 0.5 * c5, 0.9) + 0.04 * cos(ang * 25.0);
@@ -385,21 +386,28 @@ void main(){
     if (vK.y > 0.5){ g = exp(-r * r * 5.0) * 0.3; }
     o = vec4(mix(c, vec3(0.85, 1.0, 0.9), exp(-r * r * 120.0)) * g * fl * vK.w, 0.0);
   } else if (kind == 10){ // dragonfly seen from above, heading +x. k2 hue, k3 alpha
-    float x = uv.x, y = uv.y;
-    float body = (1.0 - smoothstep(0.07, 0.1, abs(y))) * step(-0.95, x) * step(x, 0.7);
-    float head = 1.0 - smoothstep(0.07, 0.1, length(vec2(x - 0.72, y) * vec2(1.0, 1.0)));
-    float wing = 0.0;
+    float x = uv.x, y = uv.y, ay = abs(y);
+    float bw = 0.05 - 0.02 * smoothstep(-0.2, -0.95, x);
+    float seg = 0.8 + 0.2 * sin(x * 55.0);
+    float abd = (1.0 - smoothstep(bw - 0.015, bw, ay)) * step(-0.95, x) * step(x, 0.12) * seg;
+    float thx = 1.0 - smoothstep(0.85, 1.0, length(vec2((x - 0.28) / 0.17, y / 0.1)));
+    float head = 1.0 - smoothstep(0.8, 1.0, length(vec2(x - 0.6, y)) / 0.085);
+    float body = max(max(abd, thx), head);
+    float wing = 0.0, vein = 0.0;
     for (int i = 0; i < 2; i++){
-      float cx = 0.3 - 0.22 * float(i);
-      vec2 w = vec2((x - cx) * 0.9 - abs(y) * 0.25, (abs(y) - 0.45) * 1.9);
-      wing = max(wing, 1.0 - smoothstep(0.55, 0.62, length(w)));
+      float cx = 0.32 - 0.2 * float(i), hl = 0.27 + 0.03 * float(i);
+      float u = (x - cx + (ay - 0.5) * 0.3) / hl, v = (ay - 0.55) / 0.42;
+      float w = 1.0 - smoothstep(0.8, 1.0, length(vec2(u, v)));
+      wing = max(wing, w);
+      vein = max(vein, w * (1.0 - smoothstep(0.0, 0.07, abs(u))));
     }
-    wing *= smoothstep(0.04, 0.12, abs(y));
-    float fl = 0.8 + 0.2 * sin(uTime * 40.0 + vK.z * 9.0);
+    wing *= smoothstep(0.08, 0.16, ay);
+    float fl = 0.85 + 0.15 * sin(uTime * 40.0 + vK.z * 9.0);
     vec3 bc = mix(vec3(0.12, 0.5, 0.78), vec3(0.78, 0.2, 0.18), step(0.5, vK.z)) * (0.8 + 0.4 * smoothstep(0.0, 0.5, x));
-    vec3 wc = vec3(0.8, 0.92, 1.0) * (0.85 + 0.15 * sin(y * 30.0 + x * 12.0));
-    float a = max(max(body, head), wing * 0.3 * fl);
-    vec3 c = (body + head > 0.4 ? bc : wc) * uLight * uK.x;
+    vec3 wc = vec3(0.82, 0.93, 1.0) * (0.9 + 0.5 * vein);
+    float wa = wing * (0.2 + 0.22 * vein) * fl;
+    float a = max(body, wa);
+    vec3 c = (body > wa ? bc : wc) * uLight * uK.x;
     o = vec4(c * a, a) * vK.w;
   } else if (kind == 11){ // koi food pellet. k3 alpha
     float r = length(uv);
