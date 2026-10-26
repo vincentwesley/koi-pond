@@ -40,7 +40,7 @@ function start(gl: WebGL2RenderingContext): void {
   const pond = new Pond((Math.random() * 1e9) | 0, 8);
   const audio = new PondAudio();
   pond.onEat = (x) => audio.plink(0.25, (x / pond.w) * 2 - 1);
-  const feedMood = () => { const m = mood(new Date(), overrides); renderer.setMood(m); pond.setMood(m); };
+  const feedMood = () => { const m = mood(new Date(), overrides); renderer.setMood(m); pond.setMood(m); audio.setMood(m); };
   feedMood();
   setInterval(feedMood, 1000); // local clock/date only, about once a second
   let lost = false, running = false, visible = true, last = 0, raf = 0, slow = 0, fast = 0, ema = 1 / 60;
