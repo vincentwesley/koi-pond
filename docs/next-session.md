@@ -1,4 +1,4 @@
-> Update at the end of any session that changed state. Keep it lean.
+﻿> Update at the end of any session that changed state. Keep it lean.
 
 Continue work on **Koi Pond** (public repo github.com/vincentwesley/koi-pond, live at https://vincentwesley.github.io/koi-pond/ via gh-pages).
 Finish pass done 2026-10-26: typecheck, unit tests (16), e2e + axe (one spec at a time) and build green; screenshots read. Only do what the owner asks.
@@ -20,6 +20,5 @@ Finish pass done 2026-10-26: typecheck, unit tests (16), e2e + axe (one spec at 
 - WebGL context loss pauses quietly and rebuilds on restore.
 
 ## Known gaps / ideas
-1. Context restore and `pointercancel` have no e2e coverage.
-2. The packed-ripple test forces the path by hiding `EXT_color_buffer_*`; it does not assert which path ran.
-3. Owner step: OK to push `main` and deploy gh-pages (not done yet).
+1. Owner step: OK to push `main` and deploy gh-pages (not done yet).
+2. e2e covers context restore, `pointercancel`, and which ripple path ran (`canvas.dataset.ripples` = half | packed); packed look is checked via `npm run shots`.
