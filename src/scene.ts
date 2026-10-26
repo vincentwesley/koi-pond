@@ -1,6 +1,6 @@
 // Pond contents (koi, pads, flowers, petals, plants) and the CPU geometry built from them each frame.
 
-import { Koi, rng, followChain, type Vec } from "./spine";
+import { Koi, rng, followChain, TAIL_SEGS, type Vec } from "./spine";
 
 /** Vertex layout: pos.xy, uv.xy, center.xy, kind, k1, k2, k3. */
 export const STRIDE = 10;
@@ -72,7 +72,12 @@ export function nudge(dx: number, dy: number, age: number, s: number, r: number,
 }
 
 const _n: Vec = { x: 0, y: 0 };
-const VARIETIES = [0, 1, 2, 3, 4, 5, 0, 2, 5]; // kohaku, asagi, ogon, showa, shusui, sanke, + repeats
+// kohaku, tancho, showa, asagi, kumonryu, ogon, doitsu, chagoi, shusui (first 6 are always a good mix)
+const VARIETIES = [0, 6, 3, 1, 8, 2, 9, 7, 4];
+const _tp: Vec[] = Array.from({ length: TAIL_SEGS + 1 }, () => ({ x: 0, y: 0 }));
+const _tw: number[] = new Array(TAIL_SEGS + 1).fill(0);
+const _fp: Vec[] = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
+const _fw = [0, 0, 0];
 
 const bodyProfile = (u: number) => (u < 0.28 ? 0.72 + 0.28 * Math.sin((u / 0.28) * Math.PI * 0.5) : 1 - 0.85 * ((u - 0.28) / 0.72) ** 1.3);
 
@@ -97,6 +102,7 @@ export class Pond {
   private dAge = new Float32Array(DISTURBANCES).fill(DISTURB_LIFE);
   private dHead = 0;
   private lastFeed = -10;
+  private pairT = 6;
   private rand: () => number;
   private fishCount: number;
 
@@ -182,6 +188,16 @@ export class Pond {
 
   update(dt: number): void {
     this.t += dt;
+    // Every so often two idle koi pair up for a while (the follower trails the leader).
+    this.pairT -= dt;
+    if (this.pairT <= 0) {
+      this.pairT = 12 + this.rand() * 18;
+      const idle = this.fish.filter((f) => !f.leader && !f.feeding);
+      if (idle.length >= 2 && this.rand() < 0.7) {
+        const a = idle[Math.floor(this.rand() * idle.length)], b = idle.filter((f) => f !== a)[Math.floor(this.rand() * (idle.length - 1))];
+        if (!this.fish.some((f) => f.leader === a)) b.follow(a, 14 + this.rand() * 14);
+      }
+    }
     const world = { w: this.w, h: this.h, pointer: this.pointer, others: this.fish, pointerShy: this.pointerShy };
     for (const f of this.fish) {
       f.update(dt, world);
@@ -273,13 +289,29 @@ export class Pond {
       for (const [i, len, w, base] of [[2, 0.2, 0.065, 1.0], [6, 0.11, 0.04, 0.8]] as const) {
         const back = dirAt(i), nx = -back.y, ny = back.x;
         for (const s of [-1, 1]) {
-          const a = base + 0.22 * Math.sin(f.phase * 0.6 + s);
-          const dir = { x: back.x * Math.cos(a) + nx * s * Math.sin(a), y: back.y * Math.cos(a) + ny * s * Math.sin(a) };
-          under.fin({ x: pts[i].x + nx * s * hw[i] * 0.7, y: pts[i].y + ny * s * hw[i] * 0.7 }, dir, L * len, L * w, k(1));
+          // Two-joint fin: base angle and a lagging tip angle (swept further back), so it trails the stroke.
+          const a1 = base + s * f.pec[0].x, a2 = base * 0.55 + s * f.pec[1].x, ll = L * len * 0.5 * (i === 2 ? 1.3 : 1);
+          _fp[0].x = pts[i].x + nx * s * hw[i] * 0.7; _fp[0].y = pts[i].y + ny * s * hw[i] * 0.7;
+          for (let j = 1; j < 3; j++) {
+            const a = j === 1 ? a1 : a2;
+            _fp[j].x = _fp[j - 1].x + back.x * Math.cos(a) * ll + nx * s * Math.sin(a) * ll;
+            _fp[j].y = _fp[j - 1].y + back.y * Math.cos(a) * ll + ny * s * Math.sin(a) * ll;
+          }
+          _fw[0] = _fw[1] = _fw[2] = L * w * 1.15;
+          under.ribbon(_fp, _fw, 0, 0, k(1));
         }
       }
-      const d = dirAt(n - 2), sw = 0.35 * Math.sin(f.phase - n * 0.32), c = Math.cos(sw), s = Math.sin(sw);
-      under.fin({ x: pts[n - 1].x - d.x * L * 0.03, y: pts[n - 1].y - d.y * L * 0.03 }, { x: d.x * c - d.y * s, y: d.x * s + d.y * c }, L * 0.32, L * 0.14, k(2));
+      // Butterfly tail: a chain of lagging joints, each bending a little after the one before.
+      const d = dirAt(n - 2);
+      let ang = Math.atan2(d.y, d.x);
+      _tp[0].x = pts[n - 1].x - d.x * L * 0.03; _tp[0].y = pts[n - 1].y - d.y * L * 0.03;
+      _tw[0] = L * 0.05;
+      for (let j = 1; j <= TAIL_SEGS; j++) {
+        ang += f.tail[j - 1].x;
+        _tp[j].x = _tp[j - 1].x + Math.cos(ang) * L * 0.1; _tp[j].y = _tp[j - 1].y + Math.sin(ang) * L * 0.1;
+        _tw[j] = L * (0.05 + 0.15 * Math.sin(Math.min(1, j / 3.2) * Math.PI * 0.5));
+      }
+      under.ribbon(_tp, _tw, 0, 0, k(2));
       under.ribbon(pts, hw, L, maxHw, k(0));
     }
 
