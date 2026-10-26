@@ -173,7 +173,7 @@ float scaleNet(vec2 q){
   q *= vec2(2.6, 3.2); q.x += 0.5 * mod(floor(q.y), 2.0);
   vec2 f = fract(q) - 0.5; return smoothstep(0.32, 0.5, length(f * vec2(1.0, 1.25)));
 }
-// Koi skin for 6 varieties: 0 kohaku, 1 asagi, 2 ogon, 3 showa, 4 shusui, 5 sanke.
+// Koi skin: 0 kohaku, 1 asagi, 2 ogon, 3 showa, 4 shusui, 5 sanke, 6 tancho, 7 chagoi, 8 kumonryu, 9 doitsu.
 vec3 skin(int kind, float u, float v, float seed, out float metal){
   vec2 q = vec2(u * 5.0, v * 0.55) + seed * 13.7;
   float n = fbm(q * 1.4), n2 = fbm(q * 2.2 + 31.0), net = scaleNet(vec2(u * 5.0, v * 0.55));
@@ -197,19 +197,52 @@ vec3 skin(int kind, float u, float v, float seed, out float metal){
     float wht = smoothstep(0.55, 0.6, n2) * (1.0 - red);
     c = mix(SUMI, RED, red); c = mix(c, WHITE, wht);
     c *= 0.9 + 0.1 * net;
-  } else {
+  } else if (kind == 4){
     c = vec3(0.66, 0.76, 0.82);
     float row = smoothstep(0.24, 0.14, abs(v)) * (1.0 - scaleNet(vec2(u * 5.0, 0.0) + vec2(0.0, 0.25)));
     c = mix(c, vec3(0.16, 0.25, 0.42), row * step(0.14, u) * tail);
     c = mix(c, vec3(0.9, 0.36, 0.14), smoothstep(0.6, 0.92, abs(v)) + smoothstep(0.1, 0.0, u) * 0.4);
+  } else if (kind == 6){ // tancho: white, one round red crown on the head
+    c = mix(WHITE, vec3(0.9, 0.9, 0.88), net * 0.4);
+    c = mix(c, RED, 1.0 - smoothstep(0.046, 0.056, length(vec2(u - 0.13, v * 0.13))));
+  } else if (kind == 7){ // chagoi: plain bronze, paler belly
+    c = mix(vec3(0.5, 0.34, 0.17), vec3(0.78, 0.6, 0.34), 0.25 + 0.35 * n + 0.3 * abs(v) + net * 0.12);
+  } else if (kind == 8){ // kumonryu: warped black swirl on white
+    vec2 w = q * 1.3 + 3.0 * vec2(fbm(q * 1.1 + 5.0), fbm(q * 1.1 + 9.0));
+    float blk = smoothstep(0.5, 0.58, fbm(w)) * step(0.05, u);
+    c = mix(vec3(0.92, 0.93, 0.92), vec3(0.1, 0.11, 0.15), blk);
+    c = mix(c, vec3(0.5, 0.52, 0.56), smoothstep(0.62, 0.7, fbm(w + 7.0)) * (1.0 - blk) * 0.5);
+  } else { // doitsu (9): scaleless, golden-orange patches, a dorsal row of big dark-edged scales
+    c = mix(vec3(0.96, 0.9, 0.78), vec3(0.95, 0.5, 0.18), smoothstep(0.45, 0.55, n) * tail);
+    vec2 g = vec2(u * 8.0, v * 2.0 + 0.5); g.x += 0.5 * mod(floor(g.y), 2.0);
+    float d = length((fract(g) - 0.5) * vec2(1.0, 1.1));
+    float sc = smoothstep(0.34, 0.46, d) * smoothstep(0.62, 0.45, d) * smoothstep(0.62, 0.38, abs(v)) * step(0.15, u) * tail;
+    c = mix(c, vec3(0.2, 0.2, 0.3), sc * 0.8);
+    c += 0.06 * (1.0 - smoothstep(0.0, 0.4, d)) * smoothstep(0.62, 0.38, abs(v));
   }
   return c;
 }
 vec3 finColor(int kind, float x){
+  if (kind == 7) return vec3(0.84, 0.66, 0.4);
+  if (kind == 8) return mix(vec3(0.3, 0.32, 0.38), vec3(0.95, 0.95, 0.95), smoothstep(0.1, 0.8, x));
+  if (kind == 9) return mix(vec3(0.95, 0.62, 0.3), WHITE, x);
   if (kind == 2) return vec3(1.0, 0.78, 0.35);
   if (kind == 3) return mix(SUMI, WHITE, smoothstep(0.2, 0.7, x));
   if (kind == 1 || kind == 4) return mix(vec3(0.9, 0.42, 0.2), vec3(0.95, 0.85, 0.8), x);
   return WHITE;
+}
+const vec3 INK = vec3(0.03, 0.035, 0.06);
+// Fin silhouette coverage; s insets the outline so (a - inset) leaves a brush-like rim.
+float finShape(int kind, float x, float y, float s){
+  float ay = abs(y) + s;
+  if (kind == 1){
+    float w = pow(sin(3.14159 * min((x + s * 0.6) * 1.05, 1.0)), 0.6) * (0.35 + 0.65 * x);
+    return 1.0 - smoothstep(w - 0.05, w, ay);
+  }
+  float w = 0.22 + 0.78 * x;
+  float a = 1.0 - smoothstep(w - 0.05, w, ay);
+  a *= smoothstep(0.0, 0.12, abs(y) - (x - 0.62) * 1.2 - s);
+  return a * (1.0 - smoothstep(0.88, 1.0, x + s));
 }
 vec4 underwater(vec3 c, float a, float depth){
   c = mix(c, uWater, depth * 0.55);
@@ -221,7 +254,7 @@ void main(){
   vec2 uv = vUv;
   if (kind == 0){ // koi body: uv = (u head->tail, v across), vC = (length, half width)
     float u = uv.x, v = uv.y;
-    float a = 1.0 - smoothstep(0.8, 1.0, abs(v));
+    float a = 1.0 - smoothstep(0.9, 1.0, abs(v));
     if (u < 0.08) a *= 1.0 - smoothstep(0.88, 1.0, length(vec2((0.08 - u) / 0.08, v)));
     float metal;
     vec3 c = skin(int(vK.y + 0.5), u, v, vK.z, metal);
@@ -229,24 +262,26 @@ void main(){
     c *= 0.55 + 0.5 * round;
     c += (0.1 + 0.25 * metal) * exp(-v * v * 14.0) * (1.0 - u * 0.7);
     c += metal * 0.15 * sin(u * 30.0 + uTime * 0.7) * round;
+    // Ink outline with a wobbling brush width (thicker at the nose and tail).
+    float ow = 0.78 + 0.08 * vnoise(vec2(u * 18.0, vK.z * 50.0 + sign(v) * 7.0));
+    float rim = length(vec2(max(0.08 - u, 0.0) / 0.08, v));
+    float ink = max(smoothstep(ow, ow + 0.07, abs(v)), max(smoothstep(0.93, 0.97, u), u < 0.08 ? smoothstep(0.8, 0.92, rim) : 0.0));
+    c = mix(c, INK, ink * 0.85);
     vec2 e = vec2((u - 0.075) * vC.x, (abs(v) - 0.58) * vC.y);
     c = mix(c, vec3(0.02), 1.0 - smoothstep(0.008, 0.016, length(e) / vC.x));
     o = underwater(c, a * smoothstep(1.0, 0.95, u), vK.w);
   } else if (kind == 1 || kind == 2){ // pectoral (1) or tail (2): uv.x root->tip, uv.y across
-    float x = uv.x, y = uv.y, a;
-    if (kind == 1){
-      float w = pow(sin(3.14159 * min(x * 1.05, 1.0)), 0.6) * (0.35 + 0.65 * x);
-      a = 1.0 - smoothstep(w - 0.15, w, abs(y));
-    } else {
-      float w = 0.22 + 0.78 * x;
-      a = 1.0 - smoothstep(w - 0.15, w, abs(y));
-      a *= smoothstep(0.0, 0.12, abs(y) - (x - 0.62) * 1.2);
-      a *= 1.0 - smoothstep(0.88, 1.0, x);
-    }
+    float x = uv.x, y = uv.y;
+    // Brush-like rim: inset width wobbles along the fin, so the line is thick and thin like ink.
+    float inset = 0.07 + 0.07 * vnoise(vec2(x * 8.0 + y * 2.0, vK.z * 40.0));
+    float a = finShape(kind, x, y, 0.0), edge = a * (1.0 - finShape(kind, x, y, inset));
     int variety = int(vK.y + 0.5);
     vec3 c = finColor(variety, x);
-    c *= 0.85 + 0.15 * sin(y * 22.0 + x * 4.0);
-    o = underwater(c, a * (0.8 - 0.35 * x), vK.w);
+    float ray = sin(y * 22.0 + x * 4.0);
+    c *= 0.85 + 0.15 * ray;
+    c = mix(c, INK, smoothstep(0.8, 1.0, ray) * 0.22 * x);
+    c = mix(c * 1.18, INK, edge * 0.65);
+    o = underwater(c, max(a * (0.84 - 0.32 * x), edge * 0.7), vK.w * 0.7);
   } else if (kind == 3){ // soft body shadow
     float a = (1.0 - smoothstep(0.1, 1.0, abs(uv.y))) * smoothstep(1.0, 0.7, uv.x) * smoothstep(0.0, 0.1, uv.x);
     o = vec4(vec3(0.0), a * vK.w);

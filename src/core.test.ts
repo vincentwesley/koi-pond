@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Koi, attractVec, followChain, steer, wrapAngle, SEGMENTS, type Vec } from "./spine";
+import { Koi, attractVec, followChain, followVec, springStep, steer, wrapAngle, SEGMENTS, type Vec } from "./spine";
 import { nudge, Pond, DISTURB_LIFE } from "./scene";
 import { dropShape, rippleStep } from "./ripple";
 
@@ -107,6 +107,41 @@ describe("attraction", () => {
     for (let s = 0; s < 60 * 8; s++) { f.update(1 / 60, { w: 800, h: 500, pointer: null, others: [f] }); near = Math.min(near, Math.hypot(f.head.x - 220, f.head.y - 250)); }
     expect(near).toBeLessThan(60);
     expect(f.feeding).toBe(false);
+  });
+});
+
+describe("fins and pairs", () => {
+  it("springs lag their target and stay bounded even with violent input", () => {
+    const s = { x: 0, v: 0 };
+    springStep(s, 1, 40, 6, 1 / 60, 0.5);
+    expect(s.x).toBeGreaterThan(0); expect(s.x).toBeLessThan(0.2); // lags
+    for (let i = 0; i < 2000; i++) { springStep(s, (i % 2 ? 1 : -1) * 1e4, 60, 1, 0.1, 0.5); expect(Math.abs(s.x)).toBeLessThanOrEqual(0.5); expect(Number.isFinite(s.v)).toBe(true); }
+  });
+
+  it("followVec aims behind the leader and eases off when close", () => {
+    const o: Vec = { x: 0, y: 0 };
+    followVec(0, 0, 200, 0, 0, 40, 0, o); // leader ahead (heading +x): chase it
+    expect(o.x).toBeGreaterThan(0.9);
+    followVec(200 - 44, 0, 200, 0, 0, 40, 0, o); // already on the spot
+    expect(Math.hypot(o.x, o.y)).toBeLessThan(0.01);
+  });
+
+  it("a paired koi closes in on its leader, then lets go", () => {
+    const P = { speed: 0.4, turn: 1.5, wander: 1, shy: 1 };
+    const a = new Koi(400, 250, 0, 60, 0, { ...P, seed: 1 }), b = new Koi(150, 400, 0, 60, 1, { ...P, seed: 2 });
+    const all = [a, b], w = { w: 800, h: 500, pointer: null, others: all };
+    b.follow(a, 20);
+    let near = 1e9;
+    for (let s = 0; s < 60 * 20; s++) { a.update(1 / 60, w); b.update(1 / 60, w); if (s > 60 * 8) near = Math.min(near, Math.hypot(a.head.x - b.head.x, a.head.y - b.head.y)); }
+    expect(near).toBeLessThan(60 * 3);
+    b.update(1 / 60, w); b.update(1 / 60, w);
+    expect(b.leader).toBeNull();
+  });
+
+  it("tail and pectoral springs stay bounded over a long swim", () => {
+    const f = new Koi(400, 250, 0, 100, 3, { speed: 0.5, turn: 1.5, wander: 1, shy: 1, seed: 5 });
+    for (let s = 0; s < 6000; s++) f.update(1 / 60, { w: 800, h: 500, pointer: s % 300 < 60 ? { x: 400, y: 250 } : null, others: [f] });
+    for (const sp of [...f.tail, ...f.pec]) expect(Math.abs(sp.x)).toBeLessThanOrEqual(0.7);
   });
 });
 

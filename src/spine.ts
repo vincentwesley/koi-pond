@@ -43,6 +43,29 @@ export function rng(seed: number): () => number {
   };
 }
 
+/** Damped spring (angle or offset) that lags its target. Bounded: |x| <= lim, no allocation. */
+export interface Spring { x: number; v: number }
+export function springStep(s: Spring, target: number, k: number, c: number, dt: number, lim: number): void {
+  const n = Math.max(1, Math.ceil(dt / 0.008)), h = Math.min(dt, 0.1) / n; // sub-step so stiff springs stay stable
+  for (let i = 0; i < n; i++) {
+    s.v += (k * (target - s.x) - c * s.v) * h;
+    s.x += s.v * h;
+    if (s.x > lim) { s.x = lim; if (s.v > 0) s.v = 0; } else if (s.x < -lim) { s.x = -lim; if (s.v < 0) s.v = 0; }
+  }
+}
+
+/** Loose follow: steer toward a spot just behind and beside a leader (heading `lh`), eased by distance.
+ *  Written into `out`; magnitude 0..1. */
+export function followVec(hx: number, hy: number, lx: number, ly: number, lh: number, L: number, side: number, out: Vec): Vec {
+  const cx = Math.cos(lh), cy = Math.sin(lh);
+  const tx = lx - cx * L * 1.1 - cy * side * L * 0.4, ty = ly - cy * L * 1.1 + cx * side * L * 0.4;
+  const dx = tx - hx, dy = ty - hy, d = Math.hypot(dx, dy);
+  if (d < 1e-3) { out.x = out.y = 0; return out; }
+  const m = Math.min(1, d / (L * 2.5));
+  out.x = (dx / d) * m; out.y = (dy / d) * m;
+  return out;
+}
+
 export interface Personality { speed: number; turn: number; wander: number; shy: number; seed: number }
 
 export interface World {
@@ -66,6 +89,8 @@ export function attractVec(hx: number, hy: number, tx: number, ty: number, L: nu
 }
 
 const _att: Vec = { x: 0, y: 0 };
+const _fol: Vec = { x: 0, y: 0 };
+export const TAIL_SEGS = 5;
 
 export class Koi {
   pts: Vec[];
@@ -82,6 +107,13 @@ export class Koi {
   private feedAge = 0;
   private feedX = 0;
   private feedY = 0;
+  /** Lagging fin state: tail joints (each chases the previous) and pectoral base/tip. */
+  tail: Spring[] = Array.from({ length: TAIL_SEGS }, () => ({ x: 0, v: 0 }));
+  pec: Spring[] = [{ x: 0, v: 0 }, { x: 0, v: 0 }];
+  /** Loose pairing: swim behind `leader` for `buddyT` seconds. */
+  leader: Koi | null = null;
+  buddyT = 0;
+  private side = 1;
 
   length: number;
   variety: number;
@@ -109,6 +141,9 @@ export class Koi {
 
   /** Soft target: ease toward (x,y), circle it for `secs`, then go back to wandering. */
   feed(x: number, y: number, secs: number): void { this.feedX = x; this.feedY = y; this.feedT = secs; this.feedAge = 0; }
+
+  /** Swim in a loose pair behind `o` for `secs`. */
+  follow(o: Koi, secs: number): void { this.leader = o; this.buddyT = secs; this.side = this.rand() < 0.5 ? -1 : 1; }
 
   get feeding(): boolean { return this.feedT > 0; }
 
@@ -142,6 +177,15 @@ export class Koi {
       if (Math.hypot(this.feedX - h.x, this.feedY - h.y) < L) slow = 0.55;
     }
 
+    // Loose pair: drift to just behind the leader, slow a touch when close.
+    if (this.leader && this.buddyT > 0 && this.feedT <= 0) {
+      this.buddyT -= dt;
+      const o = this.leader;
+      followVec(h.x, h.y, o.head.x, o.head.y, o.heading, L, this.side, _fol);
+      dx += _fol.x * 1.6; dy += _fol.y * 1.6;
+      if (Math.hypot(o.head.x - h.x, o.head.y - h.y) < L * 2) slow = Math.min(slow, 0.85);
+    } else this.leader = null;
+
     // Shy of the pointer.
     let flee = 0;
     if (world.pointer && this.feedT <= 0) {
@@ -167,7 +211,8 @@ export class Koi {
     // Turn radius scales with speed (never tighter than ~0.4 body lengths), like a real koi.
     const maxTurn = Math.min(3, (this.speed / L / 0.4) * p.turn) * (1 + flee + urgency);
     this.heading = steer(this.heading, desired, maxTurn, dt);
-    const turning = Math.abs(wrapAngle(this.heading - before)) / Math.max(dt, 1e-4);
+    const turnS = wrapAngle(this.heading - before) / Math.max(dt, 1e-4);
+    const turning = Math.abs(turnS);
 
     this.boost = Math.max(0, this.boost - dt * 0.8);
     const target = p.speed * L * (1 + flee * 2.2 + this.boost * 2) * slow;
@@ -183,8 +228,15 @@ export class Koi {
     // Tail beat speeds up with swim speed and turning.
     this.phase += dt * (2.2 + (this.speed / L) * 6 + turning * 0.8);
 
-    // Drift slowly between depths.
-    if (this.rand() < dt * 0.08) this.depthTarget = this.rand() * 0.8;
+    // Fins and tail lag the body: tail joints chase each other, pectorals sweep and trail on turns.
+    const flow = Math.min(1, this.speed / L / 0.5);
+    springStep(this.tail[0], 0.32 * Math.sin(this.phase - SEGMENTS * 0.32) - Math.max(-0.4, Math.min(0.4, turnS * 0.12)), 60, 9, dt, 0.5);
+    for (let i = 1; i < TAIL_SEGS; i++) springStep(this.tail[i], this.tail[i - 1].x * (0.9 + 0.1 * flow), 38 - i * 4, 5, dt, 0.5);
+    springStep(this.pec[0], 0.22 * Math.sin(this.phase * 0.6) + Math.max(-0.3, Math.min(0.3, turnS * 0.06)), 22, 4, dt, 0.6);
+    springStep(this.pec[1], this.pec[0].x, 14, 3, dt, 0.7);
+
+    // Drift slowly between depths; now and then rise to the bright surface layer.
+    if (this.rand() < dt * 0.08) this.depthTarget = this.rand() < 0.3 ? this.rand() * 0.12 : this.rand() * 0.8;
     this.depth += (this.depthTarget - this.depth) * dt * 0.15;
   }
 
