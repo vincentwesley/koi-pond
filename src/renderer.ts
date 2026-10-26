@@ -7,7 +7,10 @@ import { STRIDE, type Mesh, type Pond } from "./scene";
 const CELL = 4; // css px per ripple cell
 const SIM_DT = 1 / 120;
 const MAX_DROPS = 32;
-const WATER: [number, number, number] = [0.07, 0.25, 0.22];
+import type { Mood } from "./mood";
+
+// Mood uniform block layout (floats): light 0-2, tint 3-5, sky 6-8, ambient 9, caustics 10, moon 11, ice 12, bloomGain 13, bloomThr 14.
+const MOOD_N = 15;
 
 export class Renderer {
   scale = 1;
@@ -29,6 +32,37 @@ export class Renderer {
   private cssH = 0;
   private acc = 0;
   private time = 0;
+  private cur = new Float32Array(MOOD_N); // eased mood values fed to the shaders
+  private tgt = new Float32Array(MOOD_N);
+  private moodSet = false;
+  private water = new Float32Array(3); // deep-water colour for sprites
+
+  /** Feed the current mood (about once a second); values ease in over a couple of seconds. */
+  setMood(m: Mood): void {
+    const t = this.tgt;
+    t.set(m.light, 0); t.set(m.waterTint, 3); t.set(m.skyGlow, 6);
+    t[9] = m.ambient; t[10] = m.caustics; t[11] = m.moon;
+    t[12] = m.season === "winter" ? 0.25 + 0.75 * Math.sin(Math.PI * m.seasonT) : 0;
+    t[13] = m.bloomGain; t[14] = m.bloomThr;
+    if (!this.moodSet) { this.cur.set(t); this.moodSet = true; }
+  }
+
+  private easeMood(dt: number): void {
+    const k = Math.min(1, dt * 1.5), c = this.cur, t = this.tgt;
+    for (let i = 0; i < MOOD_N; i++) c[i] += (t[i] - c[i]) * k;
+    const f = 0.35 + 0.5 * c[9];
+    this.water[0] = c[3] * f; this.water[1] = c[4] * f; this.water[2] = c[5] * f;
+  }
+
+  /** Unused uniforms resolve to null locations, which GL ignores. */
+  private moodUniforms(p: Prog): void {
+    const gl = this.gl, c = this.cur;
+    gl.uniform3f(p.u("uLight"), c[0], c[1], c[2]);
+    gl.uniform3f(p.u("uTint"), c[3], c[4], c[5]);
+    gl.uniform3f(p.u("uSky"), c[6], c[7], c[8]);
+    gl.uniform4f(p.u("uK"), c[9], c[10], c[11], c[12]);
+    gl.uniform3f(p.u("uWater"), this.water[0], this.water[1], this.water[2]);
+  }
 
   /** opts.forceNoFloat: pretend RGBA16F is unusable (exercises the packed RGBA8 ripple path). */
   constructor(private gl: WebGL2RenderingContext, private dprCap: number, opts: { forceNoFloat?: boolean } = {}) {
@@ -142,7 +176,7 @@ export class Renderer {
     gl.uniform2f(p.u("uRes"), this.cssW, this.cssH);
     gl.uniform2f(p.u("uSimTexel"), 1 / rip.w, 1 / rip.h);
     gl.uniform1f(p.u("uSurface"), surface ? 1 : 0);
-    gl.uniform3f(p.u("uWater"), ...WATER);
+    this.moodUniforms(p);
     gl.uniform1f(p.u("uTime"), this.time);
     this.bindTex(p, "uRip", 0, rip.tex);
     gl.bindVertexArray(this.spriteVao);
@@ -158,6 +192,7 @@ export class Renderer {
     const gl = this.gl;
     if (!this.under || !this.scene || !this.floor || !this.bloomA || !this.bloomB) return;
     this.time += dt;
+    this.easeMood(dt);
     // Fixed-step ripples.
     this.acc = Math.min(this.acc + dt, SIM_DT * 4);
     let steps = 0;
@@ -171,6 +206,7 @@ export class Renderer {
       gl.uniform2f(p.u("uRes"), cw, ch);
       gl.uniform1f(p.u("uTime"), this.time);
       gl.uniform1f(p.u("uScale"), ps);
+      this.moodUniforms(p);
     };
 
     this.pass(this.P.under, this.under, (p) => {
@@ -182,14 +218,13 @@ export class Renderer {
 
     this.pass(this.P.water, this.scene, (p) => {
       common(p);
-      gl.uniform3f(p.u("uWater"), ...WATER);
       this.bindTex(p, "uUnder", 0, this.under!.tex);
       this.bindTex(p, "uRip", 1, rip.tex);
     });
     this.drawMesh(pond.surface, true);
 
     const A = this.bloomA, B = this.bloomB;
-    this.pass(this.P.bright, A, (p) => this.bindTex(p, "uSrc", 0, this.scene!.tex));
+    this.pass(this.P.bright, A, (p) => { this.bindTex(p, "uSrc", 0, this.scene!.tex); gl.uniform1f(p.u("uThr"), this.cur[14]); });
     for (const [from, to, dx, dy] of [[A, B, 1, 0], [B, A, 0, 1]] as const) {
       this.pass(this.P.blur, to, (p) => {
         this.bindTex(p, "uSrc", 0, from.tex);
@@ -201,6 +236,7 @@ export class Renderer {
       this.bindTex(p, "uBloom", 1, A.tex);
       gl.uniform2f(p.u("uPx"), gl.canvas.width, gl.canvas.height);
       gl.uniform1f(p.u("uTime"), this.time);
+      gl.uniform1f(p.u("uBloomG"), this.cur[13]);
     });
   }
 }
