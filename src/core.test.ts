@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Koi, followChain, steer, wrapAngle, SEGMENTS, type Vec } from "./spine";
+import { Koi, attractVec, followChain, steer, wrapAngle, SEGMENTS, type Vec } from "./spine";
+import { nudge, Pond, DISTURB_LIFE } from "./scene";
 import { dropShape, rippleStep } from "./ripple";
 
 describe("spine", () => {
@@ -85,5 +86,48 @@ describe("ripple", () => {
     expect(dropShape(0, 5)).toBe(1);
     expect(dropShape(5, 5)).toBe(0);
     expect(dropShape(2.5, 5)).toBeCloseTo(0.5);
+  });
+});
+
+describe("attraction", () => {
+  const o: Vec = { x: 0, y: 0 };
+  it("approaches from afar, circles when close, zero on target", () => {
+    attractVec(0, 0, 100, 0, 20, o);
+    expect(o.x).toBeCloseTo(1); expect(o.y).toBeCloseTo(0);
+    attractVec(0, 0, 12, 0, 20, o); // on the orbit radius (0.6 L)
+    expect(Math.abs(o.y)).toBeGreaterThan(0.5); expect(Math.abs(o.x)).toBeLessThan(0.1);
+    attractVec(5, 5, 5, 5, 20, o);
+    expect(o.x).toBe(0); expect(o.y).toBe(0);
+  });
+
+  it("a fed koi reaches the target, then resumes wandering", () => {
+    const f = new Koi(100, 250, 0, 60, 0, { speed: 0.5, turn: 1.5, wander: 1, shy: 1, seed: 3 });
+    f.feed(400, 250, 6);
+    let near = 1e9;
+    for (let s = 0; s < 60 * 8; s++) { f.update(1 / 60, { w: 800, h: 500, pointer: null, others: [f] }); near = Math.min(near, Math.hypot(f.head.x - 400, f.head.y - 250)); }
+    expect(near).toBeLessThan(60);
+    expect(f.feeding).toBe(false);
+  });
+});
+
+describe("nudge", () => {
+  const o: Vec = { x: 0, y: 0 };
+  it("pushes radially away, fades with age and distance, expires", () => {
+    nudge(10, 0, 0, 1, 10, o);
+    expect(o.x).toBeGreaterThan(0); expect(o.y).toBeCloseTo(0);
+    const fresh = o.x;
+    nudge(10, 0, 1, 1, 10, o); expect(o.x).toBeLessThan(fresh);
+    nudge(80, 0, 0, 1, 10, o); expect(o.x).toBeLessThan(fresh);
+    nudge(10, 0, DISTURB_LIFE, 1, 10, o); expect(o.x).toBe(0);
+  });
+
+  it("pads stay tethered and petals stay in bounds after heavy poking", () => {
+    const p = new Pond(1, 6);
+    p.resize(800, 600);
+    for (let i = 0; i < 600; i++) { p.splash(Math.random() * 800, Math.random() * 600, 1.2, 12); p.update(1 / 60); }
+    for (const pad of p.pads) expect(Math.hypot(pad.ox, pad.oy)).toBeLessThanOrEqual(600 * 0.012 + 1e-6);
+    for (const q of p.petals) { expect(Number.isFinite(q.x)).toBe(true); expect(q.x).toBeGreaterThan(-45); expect(q.x).toBeLessThan(845); }
+    for (let i = 0; i < 600; i++) p.update(1 / 60);
+    for (const pad of p.pads) expect(Math.hypot(pad.ox, pad.oy)).toBeLessThan(0.5);
   });
 });

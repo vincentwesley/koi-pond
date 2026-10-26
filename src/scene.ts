@@ -52,12 +52,26 @@ export class Mesh {
   }
 }
 
-interface Pad { nx: number; ny: number; size: number; rot: number; spin: number; age: number; seed: number; flower?: { white: boolean; seed: number } }
-interface Petal { x: number; y: number; vx: number; vy: number; rot: number; spin: number; size: number }
+interface Pad { ox: number; oy: number; vx: number; vy: number; kick: number; nx: number; ny: number; size: number; rot: number; spin: number; age: number; seed: number; flower?: { white: boolean; seed: number } }
+interface Petal { x: number; y: number; ex: number; ey: number; vx: number; vy: number; rot: number; spin: number; size: number }
 interface Plant { nx: number; ny: number; ang: number; blades: { da: number; len: number; curl: number; ph: number; shade: number }[] }
 
 export interface Drop { x: number; y: number; r: number; s: number }
 
+export const DISTURBANCES = 16;
+export const DISTURB_LIFE = 2.5;
+
+/** Radial push (unitless, ~0..s) on a point at offset (dx,dy) from a disturbance of strength s and
+ *  radius r, `age` seconds old. Fades with age and distance; written into `out`. */
+export function nudge(dx: number, dy: number, age: number, s: number, r: number, out: Vec): Vec {
+  const d = Math.hypot(dx, dy), life = 1 - age / DISTURB_LIFE;
+  if (life <= 0 || d < 1e-3) { out.x = out.y = 0; return out; }
+  const reach = r * 4, m = (s * life * life * Math.exp(-((d / reach) ** 2))) / d;
+  out.x = dx * m; out.y = dy * m;
+  return out;
+}
+
+const _n: Vec = { x: 0, y: 0 };
 const VARIETIES = [0, 1, 2, 3, 4, 5, 0, 2, 5]; // kohaku, asagi, ogon, showa, shusui, sanke, + repeats
 
 const bodyProfile = (u: number) => (u < 0.28 ? 0.72 + 0.28 * Math.sin((u / 0.28) * Math.PI * 0.5) : 1 - 0.85 * ((u - 0.28) / 0.72) ** 1.3);
@@ -74,6 +88,15 @@ export class Pond {
   surface = new Mesh();
   pointer: Vec | null = null;
   drops: Drop[] = [];
+  pointerShy = 1;
+  // Fixed ring of recent disturbances (no per-frame allocation); age >= DISTURB_LIFE means unused.
+  private dX = new Float32Array(DISTURBANCES);
+  private dY = new Float32Array(DISTURBANCES);
+  private dS = new Float32Array(DISTURBANCES);
+  private dR = new Float32Array(DISTURBANCES);
+  private dAge = new Float32Array(DISTURBANCES).fill(DISTURB_LIFE);
+  private dHead = 0;
+  private lastFeed = -10;
   private rand: () => number;
   private fishCount: number;
 
@@ -117,12 +140,12 @@ export class Pond {
     ];
     for (const [nx, ny, size, flower] of layout) {
       this.pads.push({
-        nx, ny, size, rot: r() * Math.PI * 2, spin: (r() - 0.5) * 0.02, age: r() * 0.8, seed: r(),
+        ox: 0, oy: 0, vx: 0, vy: 0, kick: 0, nx, ny, size, rot: r() * Math.PI * 2, spin: (r() - 0.5) * 0.02, age: r() * 0.8, seed: r(),
         flower: flower ? { white: r() > 0.5, seed: r() } : undefined,
       });
     }
     for (let i = 0; i < 16; i++) {
-      this.petals.push({ x: r() * this.w, y: r() * this.h, vx: (r() - 0.3) * 6, vy: (r() - 0.5) * 4, rot: r() * 6.28, spin: (r() - 0.5) * 0.3, size: 0.6 + r() * 0.5 });
+      this.petals.push({ ex: 0, ey: 0, x: r() * this.w, y: r() * this.h, vx: (r() - 0.3) * 6, vy: (r() - 0.5) * 4, rot: r() * 6.28, spin: (r() - 0.5) * 0.3, size: 0.6 + r() * 0.5 });
     }
     const clumps: [number, number, number][] = [[-0.02, 0.3, 0.15], [-0.02, 0.62, -0.1], [0.35, 1.02, -1.45], [0.62, -0.02, 1.7]];
     for (const [nx, ny, ang] of clumps) {
@@ -136,28 +159,71 @@ export class Pond {
   /** Disturb the water at a point (world px). */
   splash(x: number, y: number, strength: number, radius = 14): void {
     this.drops.push({ x, y, r: radius, s: strength });
+    this.disturb(x, y, strength, radius);
     if (Math.abs(strength) > 0.3) {
-      for (const f of this.fish) if (Math.hypot(f.head.x - x, f.head.y - y) < f.length * 2) f.startle(0.8);
+      for (const f of this.fish) if (Math.hypot(f.head.x - x, f.head.y - y) < f.length) f.startle(0.8);
     }
+  }
+
+  /** Record a push on pads and petals (ring buffer, oldest overwritten). */
+  disturb(x: number, y: number, s: number, r: number): void {
+    const i = this.dHead; this.dHead = (i + 1) % DISTURBANCES;
+    this.dX[i] = x; this.dY[i] = y; this.dS[i] = Math.min(1.5, Math.abs(s)); this.dR[i] = r; this.dAge[i] = 0;
+  }
+
+  /** A tap: the 1-3 nearest koi drift over to nibble at the point (at most one feed per ~1.5 s). */
+  tap(x: number, y: number): void {
+    if (this.t - this.lastFeed < 1.5) return;
+    this.lastFeed = this.t;
+    const n = 1 + Math.floor(this.rand() * 3);
+    const near = this.fish.filter((f) => !f.feeding).sort((a, b) => Math.hypot(a.head.x - x, a.head.y - y) - Math.hypot(b.head.x - x, b.head.y - y));
+    for (const f of near.slice(0, n)) f.feed(x, y, 4 + this.rand() * 2.5);
   }
 
   update(dt: number): void {
     this.t += dt;
-    const world = { w: this.w, h: this.h, pointer: this.pointer, others: this.fish };
+    const world = { w: this.w, h: this.h, pointer: this.pointer, others: this.fish, pointerShy: this.pointerShy };
     for (const f of this.fish) {
       f.update(dt, world);
       // Shallow, quick fish leave a faint wake.
       if (f.depth < 0.25 && this.rand() < dt * 3) this.drops.push({ x: f.head.x, y: f.head.y, r: f.length * 0.08, s: 0.04 });
+      // Koi wake pushes lightly on whatever floats near the head.
+      if (f.speed > 0.2 * f.length) this.disturb(f.head.x, f.head.y, 0.05, f.length * 0.1);
     }
-    const m = 20;
+    for (let i = 0; i < DISTURBANCES; i++) this.dAge[i] += dt;
+    const m = 20, U = this.unit, drag = Math.exp(-dt * 1.5), maxOff = U * 0.012;
     for (const p of this.petals) {
-      p.x += (p.vx + Math.sin(this.t * 0.2 + p.y * 0.01) * 3) * dt;
-      p.y += (p.vy + Math.cos(this.t * 0.17 + p.x * 0.01) * 3) * dt;
+      let ax = 0, ay = 0;
+      for (let i = 0; i < DISTURBANCES; i++) {
+        if (this.dAge[i] >= DISTURB_LIFE) continue;
+        nudge(p.x - this.dX[i], p.y - this.dY[i], this.dAge[i], this.dS[i], this.dR[i], _n);
+        ax += _n.x; ay += _n.y;
+      }
+      p.ex = (p.ex + ax * U * 0.08 * dt) * drag; p.ey = (p.ey + ay * U * 0.08 * dt) * drag;
+      p.x += (p.vx + p.ex + Math.sin(this.t * 0.2 + p.y * 0.01) * 3) * dt;
+      p.y += (p.vy + p.ey + Math.cos(this.t * 0.17 + p.x * 0.01) * 3) * dt;
       p.rot += p.spin * dt;
       if (p.x < -m) p.x += this.w + 2 * m; else if (p.x > this.w + m) p.x -= this.w + 2 * m;
       if (p.y < -m) p.y += this.h + 2 * m; else if (p.y > this.h + m) p.y -= this.h + 2 * m;
     }
-    for (const p of this.pads) p.rot += p.spin * dt;
+    const k = 6, c = 3.5; // tether spring + damping
+    for (const p of this.pads) {
+      let ax = 0, ay = 0, kick = 0;
+      for (let i = 0; i < DISTURBANCES; i++) {
+        if (this.dAge[i] >= DISTURB_LIFE) continue;
+        const dx = p.nx * this.w + p.ox - this.dX[i], dy = p.ny * this.h + p.oy - this.dY[i];
+        nudge(dx, dy, this.dAge[i], this.dS[i], this.dR[i], _n);
+        ax += _n.x; ay += _n.y;
+        kick += dx * _n.y - dy * _n.x; // off-centre push twists the pad
+      }
+      const g = U * 0.1;
+      p.vx += (ax * g - k * p.ox - c * p.vx) * dt; p.vy += (ay * g - k * p.oy - c * p.vy) * dt;
+      p.ox += p.vx * dt; p.oy += p.vy * dt;
+      const o = Math.hypot(p.ox, p.oy);
+      if (o > maxOff) { p.ox *= maxOff / o; p.oy *= maxOff / o; }
+      p.kick = (p.kick + Math.max(-1, Math.min(1, kick / (U * 0.1 + 1))) * 0.05 * dt * 60) * Math.exp(-dt * 2);
+      p.rot += (p.spin + p.kick) * dt;
+    }
   }
 
   build(): void {
@@ -166,7 +232,7 @@ export class Pond {
     const sh = U * 0.012;
 
     // Pad shadows on the floor.
-    for (const p of this.pads) under.sprite(p.nx * this.w + sh * 2.5, p.ny * this.h + sh * 3, p.size * U * 0.1, 0, [4, 0, 0, 0.35]);
+    for (const p of this.pads) under.sprite(p.nx * this.w + p.ox + sh * 2.5, p.ny * this.h + p.oy + sh * 3, p.size * U * 0.1, 0, [4, 0, 0, 0.35]);
 
     // Fish shadows.
     const fish = [...this.fish].sort((a, b) => b.depth - a.depth);
@@ -219,13 +285,13 @@ export class Pond {
 
     // Surface: pads, flowers, petals (bob with the ripples in the vertex shader).
     for (const p of this.pads) {
-      const x = p.nx * this.w, y = p.ny * this.h, r = p.size * U * 0.1;
+      const x = p.nx * this.w + p.ox, y = p.ny * this.h + p.oy, r = p.size * U * 0.1;
       surf.sprite(x, y, r, p.rot, [6, p.seed, p.age, 0]);
     }
     for (const p of this.pads) {
       if (!p.flower) continue;
       const r = p.size * U * 0.1, a = p.rot + 2.4;
-      const fx = p.nx * this.w + Math.cos(a) * r * 0.3, fy = p.ny * this.h + Math.sin(a) * r * 0.3;
+      const fx = p.nx * this.w + p.ox + Math.cos(a) * r * 0.3, fy = p.ny * this.h + p.oy + Math.sin(a) * r * 0.3;
       surf.sprite(fx, fy, r * 0.5, p.rot * 0.5, [7, p.flower.seed, p.flower.white ? 1 : 0, 0]);
     }
     for (const p of this.petals) surf.sprite(p.x, p.y, U * 0.014 * p.size, p.rot, [8, 0, 0, 0]);

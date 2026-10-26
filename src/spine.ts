@@ -49,7 +49,23 @@ export interface World {
   w: number; h: number;
   pointer: Vec | null; // only set while the pointer is disturbing the water
   others: readonly Koi[];
+  pointerShy?: number; // 0..1 scale on shyness of the pointer (hover is milder than a press); default 1
 }
+
+/** Steering vector toward a soft target: approach, then circle it at ~0.6 body lengths (nibble).
+ *  Written into `out` (no allocation). Zero when sitting on the target. */
+export function attractVec(hx: number, hy: number, tx: number, ty: number, L: number, out: Vec): Vec {
+  const dx = tx - hx, dy = ty - hy, d = Math.hypot(dx, dy);
+  if (d < 1e-3) { out.x = out.y = 0; return out; }
+  const ux = dx / d, uy = dy / d, r0 = L * 0.6;
+  const w = Math.max(0, Math.min(1, (d - r0) / (r0 * 0.5))); // 1 = far (pure approach), 0 = on the orbit
+  const rad = w + (1 - w) * Math.max(-1, Math.min(1, (d - r0) / r0)) * 0.5, tan = (1 - w) * 0.8;
+  out.x = ux * rad - uy * tan;
+  out.y = uy * rad + ux * tan;
+  return out;
+}
+
+const _att: Vec = { x: 0, y: 0 };
 
 export class Koi {
   pts: Vec[];
@@ -62,6 +78,10 @@ export class Koi {
   private depthTarget: number;
   private rand: () => number;
   private boost = 0;
+  private feedT = 0;
+  private feedAge = 0;
+  private feedX = 0;
+  private feedY = 0;
 
   length: number;
   variety: number;
@@ -87,6 +107,11 @@ export class Koi {
   /** Speed burst, e.g. when a drop lands nearby. */
   startle(amount: number): void { this.boost = Math.max(this.boost, amount); }
 
+  /** Soft target: ease toward (x,y), circle it for `secs`, then go back to wandering. */
+  feed(x: number, y: number, secs: number): void { this.feedX = x; this.feedY = y; this.feedT = secs; this.feedAge = 0; }
+
+  get feeding(): boolean { return this.feedT > 0; }
+
   update(dt: number, world: World): void {
     const { p } = this;
     const h = this.head;
@@ -107,13 +132,23 @@ export class Koi {
     dy += wy;
     const urgency = Math.min(2, Math.hypot(wx, wy));
 
+    // Soft target (tap): ease in over ~0.8 s, ignore the pointer while nibbling.
+    let slow = 1;
+    if (this.feedT > 0) {
+      this.feedT -= dt; this.feedAge += dt;
+      const ease = Math.min(1, this.feedAge / 0.8) * Math.min(1, this.feedT / 0.6 + 0.3);
+      attractVec(h.x, h.y, this.feedX, this.feedY, L, _att);
+      dx += _att.x * 2.5 * ease; dy += _att.y * 2.5 * ease;
+      if (Math.hypot(this.feedX - h.x, this.feedY - h.y) < L) slow = 0.55;
+    }
+
     // Shy of the pointer.
     let flee = 0;
-    if (world.pointer) {
+    if (world.pointer && this.feedT <= 0) {
       const px = h.x - world.pointer.x, py = h.y - world.pointer.y;
       const d = Math.hypot(px, py), r = L * 1.6;
       if (d < r && d > 1e-3) {
-        flee = ((r - d) / r) * p.shy;
+        flee = ((r - d) / r) * p.shy * (world.pointerShy ?? 1);
         dx += (px / d) * flee * 3;
         dy += (py / d) * flee * 3;
       }
@@ -135,7 +170,7 @@ export class Koi {
     const turning = Math.abs(wrapAngle(this.heading - before)) / Math.max(dt, 1e-4);
 
     this.boost = Math.max(0, this.boost - dt * 0.8);
-    const target = p.speed * L * (1 + flee * 2.2 + this.boost * 2);
+    const target = p.speed * L * (1 + flee * 2.2 + this.boost * 2) * slow;
     this.speed += (target - this.speed) * Math.min(1, dt * 1.5);
 
     h.x += Math.cos(this.heading) * this.speed * dt;
