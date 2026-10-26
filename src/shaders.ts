@@ -23,17 +23,42 @@ void main(){
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
-/** Ripple step: r = height now, g = height last step. Drops are (cellX, cellY, radiusCells, strength). */
+/** Ripple state codec + height sampler. Float path: RG16F (cur, prev). PACKED path: RGBA8 holding two 16-bit fixed-point
+ * values (cur in RG, prev in BA), NEAREST sampled, so ripH does the bilinear filtering by hand. Needs "#define PACKED" first. */
+const RIP = `
+#ifdef PACKED
+vec2 ripDec(vec4 t){ vec4 b = floor(t * 255.0 + 0.5); return (vec2(b.x, b.z) * 256.0 + vec2(b.y, b.w) - 32768.0) / 8192.0; }
+vec4 ripEnc(vec2 v){
+  vec2 u = clamp(floor(v * 8192.0 + 0.5) + 32768.0, 0.0, 65535.0), hi = floor(u / 256.0);
+  return vec4(hi.x, u.x - hi.x * 256.0, hi.y, u.y - hi.y * 256.0) / 255.0;
+}
+float ripH(sampler2D s, vec2 uv){
+  vec2 sz = vec2(textureSize(s, 0)), p = uv * sz - 0.5, f = fract(p), q = (floor(p) + 0.5) / sz, t = 1.0 / sz;
+  return mix(mix(ripDec(texture(s, q)).x, ripDec(texture(s, q + vec2(t.x, 0))).x, f.x),
+             mix(ripDec(texture(s, q + vec2(0, t.y))).x, ripDec(texture(s, q + t)).x, f.x), f.y);
+}
+#else
+vec2 ripDec(vec4 t){ return t.rg; }
+vec4 ripEnc(vec2 v){ return vec4(v, 0.0, 1.0); }
+float ripH(sampler2D s, vec2 uv){ return texture(s, uv).r; }
+#endif
+`;
+
+/** Switch a shader to the packed RGBA8 ripple state. */
+export const packed = (src: string): string => src.replace("#version 300 es\n", "#version 300 es\n#define PACKED\n");
+
+/** Ripple step: cur = height now, prev = height last step. Drops are (cellX, cellY, radiusCells, strength). */
 export const SIM_FS = `${H}
 in vec2 vUv; out vec4 o;
 uniform sampler2D uState; uniform vec2 uTexel; uniform vec2 uSize; uniform float uDamp;
 uniform vec4 uDrops[32]; uniform int uDropN;
+${RIP}
 void main(){
-  vec2 s = texture(uState, vUv).rg;
-  float l = texture(uState, vUv - vec2(uTexel.x, 0.0)).r;
-  float r = texture(uState, vUv + vec2(uTexel.x, 0.0)).r;
-  float d = texture(uState, vUv - vec2(0.0, uTexel.y)).r;
-  float u = texture(uState, vUv + vec2(0.0, uTexel.y)).r;
+  vec2 s = ripDec(texture(uState, vUv));
+  float l = ripDec(texture(uState, vUv - vec2(uTexel.x, 0.0))).x;
+  float r = ripDec(texture(uState, vUv + vec2(uTexel.x, 0.0))).x;
+  float d = ripDec(texture(uState, vUv - vec2(0.0, uTexel.y))).x;
+  float u = ripDec(texture(uState, vUv + vec2(0.0, uTexel.y))).x;
   float n = ((l + r + u + d) * 0.5 - s.g) * uDamp;
   vec2 cell = vUv * uSize;
   for (int i = 0; i < 32; i++){
@@ -42,7 +67,7 @@ void main(){
     float dd = distance(cell, dr.xy);
     if (dd < dr.z) n += dr.w * (0.5 + 0.5 * cos(3.14159265 * dd / dr.z));
   }
-  o = vec4(clamp(n, -4.0, 4.0), s.r, 0.0, 1.0);
+  o = ripEnc(vec2(clamp(n, -4.0, 3.99), s.x));
 }`;
 
 /** Static pond floor (rendered once per resize): pebbles, silt, moss, depth tint. */
@@ -85,7 +110,7 @@ void main(){
 export const UNDER_FS = `${H}
 in vec2 vUv; out vec4 o;
 uniform sampler2D uFloor; uniform sampler2D uRip; uniform vec2 uSimTexel; uniform vec2 uRes; uniform float uTime; uniform float uScale;
-${NOISE}
+${NOISE}${RIP}
 float cells(vec2 p, float t){
   vec2 i = floor(p), f = fract(p); float d1 = 8.0, d2 = 8.0;
   for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++){
@@ -97,9 +122,9 @@ float cells(vec2 p, float t){
 }
 void main(){
   vec3 c = texture(uFloor, vUv).rgb;
-  float h = texture(uRip, vUv).r;
-  float lap = texture(uRip, vUv + vec2(uSimTexel.x, 0)).r + texture(uRip, vUv - vec2(uSimTexel.x, 0)).r
-            + texture(uRip, vUv + vec2(0, uSimTexel.y)).r + texture(uRip, vUv - vec2(0, uSimTexel.y)).r - 4.0 * h;
+  float h = ripH(uRip, vUv);
+  float lap = ripH(uRip, vUv + vec2(uSimTexel.x, 0)) + ripH(uRip, vUv - vec2(uSimTexel.x, 0))
+            + ripH(uRip, vUv + vec2(0, uSimTexel.y)) + ripH(uRip, vUv - vec2(0, uSimTexel.y)) - 4.0 * h;
   vec2 px = vec2(vUv.x, 1.0 - vUv.y) * uRes / uScale;
   vec2 p = px / 95.0;
   p += 0.18 * sin(p.yx * 1.7 + uTime * 0.35);
@@ -120,14 +145,15 @@ layout(location = 2) in vec2 aCenter;
 layout(location = 3) in vec4 aK;
 uniform vec2 uRes; uniform sampler2D uRip; uniform vec2 uSimTexel; uniform float uSurface;
 out vec2 vUv; out vec4 vK; out vec2 vC; out float vH;
+${RIP}
 void main(){
   vec2 pos = aPos; vH = 0.0;
   if (uSurface > 0.5){
     vec2 c = vec2(aCenter.x / uRes.x, 1.0 - aCenter.y / uRes.y);
     vec2 t = uSimTexel * 2.0;
-    float h = texture(uRip, c).r;
-    float gx = texture(uRip, c + vec2(t.x, 0)).r - texture(uRip, c - vec2(t.x, 0)).r;
-    float gy = texture(uRip, c + vec2(0, t.y)).r - texture(uRip, c - vec2(0, t.y)).r;
+    float h = ripH(uRip, c);
+    float gx = ripH(uRip, c + vec2(t.x, 0)) - ripH(uRip, c - vec2(t.x, 0));
+    float gy = ripH(uRip, c + vec2(0, t.y)) - ripH(uRip, c - vec2(0, t.y));
     pos = aCenter + (pos - aCenter) * (1.0 + clamp(h, -1.0, 1.0) * 0.05);
     pos += clamp(vec2(-gx, gy) * 10.0, -8.0, 8.0);
     vH = h;
@@ -270,8 +296,8 @@ void main(){
 export const WATER_FS = `${H}
 in vec2 vUv; out vec4 o;
 uniform sampler2D uUnder; uniform sampler2D uRip; uniform vec2 uSimTexel; uniform vec2 uRes; uniform float uTime; uniform vec3 uWater; uniform float uScale;
-${NOISE}
-float hgt(vec2 p){ return texture(uRip, p).r; }
+${NOISE}${RIP}
+float hgt(vec2 p){ return ripH(uRip, p); }
 void main(){
   vec2 t = uSimTexel;
   float hx = hgt(vUv + vec2(t.x, 0)) - hgt(vUv - vec2(t.x, 0));

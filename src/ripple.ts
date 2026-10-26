@@ -15,3 +15,16 @@ export function rippleStep(cur: Float32Array, prev: Float32Array, out: Float32Ar
 /** Raised-cosine drop profile, as used by the shader. */
 export const dropShape = (dist: number, radius: number): number =>
   dist >= radius ? 0 : 0.5 + 0.5 * Math.cos((Math.PI * dist) / radius);
+
+// Packed fixed-point state for RGBA8 targets (no float render support): a height in [-4, 4)
+// is stored as a 16-bit integer, high byte then low byte. Mirrors ripEnc/ripDec in shaders.ts.
+export const PACK_SCALE = 8192;
+export const PACK_ZERO = 32768;
+
+/** Height -> [hi, lo] bytes (clamped, rounded to 1/8192). */
+export function pack16(v: number): [number, number] {
+  const u = Math.min(65535, Math.max(0, Math.floor(v * PACK_SCALE + 0.5) + PACK_ZERO));
+  return [u >> 8, u & 255];
+}
+
+export const unpack16 = (hi: number, lo: number): number => (hi * 256 + lo - PACK_ZERO) / PACK_SCALE;
