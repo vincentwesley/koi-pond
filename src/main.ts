@@ -34,6 +34,7 @@ else start(gl);
 function start(gl: WebGL2RenderingContext): void {
   let renderer: Renderer;
   try { renderer = new Renderer(gl, embed ? 1.5 : 2); } catch (e) { console.error(e); return fail(); }
+  canvas.dataset.ripples = renderer.ripplePath;
   const pond = new Pond((Math.random() * 1e9) | 0, 8);
   const audio = new PondAudio();
   let lost = false, running = false, visible = true, last = 0, raf = 0, slow = 0, fast = 0, ema = 1 / 60;
@@ -78,6 +79,7 @@ function start(gl: WebGL2RenderingContext): void {
   canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); lost = true; running = false; cancelAnimationFrame(raf); });
   canvas.addEventListener("webglcontextrestored", () => {
     try { renderer = new Renderer(gl, embed ? 1.5 : 2); } catch (e) { console.error(e); return fail(); }
+    canvas.dataset.ripples = renderer.ripplePath;
     lost = false;
     size();
     sync();

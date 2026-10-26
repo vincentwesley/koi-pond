@@ -15,6 +15,10 @@ try {
   const errors = [];
   const shot = async (name, width, height, query = "", opts = {}) => {
     const ctx = await browser.newContext({ viewport: { width, height }, reducedMotion: opts.reduced ? "reduce" : "no-preference" });
+    if (opts.packed) await ctx.addInitScript(() => {
+      const orig = WebGL2RenderingContext.prototype.getExtension;
+      WebGL2RenderingContext.prototype.getExtension = function (name) { return name.startsWith("EXT_color_buffer_") ? null : orig.call(this, name); };
+    });
     if (opts.light) await ctx.addInitScript(() => localStorage.setItem("theme", "light"));
     const page = await ctx.newPage();
     page.on("console", (m) => m.type() === "error" && errors.push(`${name}: ${m.text()}`));
@@ -37,6 +41,8 @@ try {
   await shot("standalone-375-dark", 375, 812);
   await shot("standalone-375-light", 375, 812, "", { light: true });
   await shot("standalone-1280-reduced", 1280, 800, "", { reduced: true });
+  await shot("standalone-1280-packed", 1280, 800, "", { packed: true });
+  await shot("embed-375-packed", 375, 667, "?embed=1", { packed: true });
   await shot("embed-1280", 1280, 800, "?embed=1");
   await shot("embed-375", 375, 812, "?embed=1");
   await shot("embed-1280-reduced", 1280, 800, "?embed=1", { reduced: true });

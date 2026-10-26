@@ -33,6 +33,7 @@ test("ripple fallback (no float render targets) renders and reacts to taps", asy
   await page.goto("/");
   await page.waitForTimeout(1000);
   await expect(page.locator("#fallback")).toBeHidden();
+  await expect(page.locator("#pond")).toHaveAttribute("data-ripples", "packed");
   expect(await tapDiff(page)).toBeGreaterThan(500);
   expect(errs).toEqual([]);
   await expect(page.locator("#fallback")).toBeHidden();
@@ -43,6 +44,7 @@ test("float ripple path: tap changes pixels, no console errors", async ({ page }
   await page.goto("/");
   await page.waitForTimeout(1000);
   await expect(page.locator("#fallback")).toBeHidden();
+  await expect(page.locator("#pond")).toHaveAttribute("data-ripples", "half");
   expect(await tapDiff(page)).toBeGreaterThan(500);
   expect(errs).toEqual([]);
 });

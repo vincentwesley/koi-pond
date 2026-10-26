@@ -12,6 +12,7 @@ const WATER: [number, number, number] = [0.07, 0.25, 0.22];
 export class Renderer {
   scale = 1;
   private half: boolean; // RGBA16F targets usable (scene/bloom)
+  get ripplePath(): "half" | "packed" { return this.packed ? "packed" : "half"; }
   private packed: boolean; // ripple state in packed RGBA8 instead of RG16F
   private drops = new Float32Array(MAX_DROPS * 4);
   private P: Record<"sim" | "floor" | "under" | "sprite" | "water" | "bright" | "blur" | "final", Prog>;
