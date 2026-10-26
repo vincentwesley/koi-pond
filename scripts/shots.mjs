@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { chromium } from "playwright";
 
-const PORT = 4411;
+const PORT = Number(process.env.SHOTS_PORT) || 4411;
 const server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 const base = `http://localhost:${PORT}/`;
 mkdirSync("qa-output", { recursive: true });
