@@ -14,6 +14,7 @@ try {
   const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
   const errors = [];
   const shot = async (name, width, height, query = "", opts = {}) => {
+    if (process.argv[2] && !name.includes(process.argv[2])) return; // optional name filter
     const ctx = await browser.newContext({ viewport: { width, height }, reducedMotion: opts.reduced ? "reduce" : "no-preference" });
     if (opts.packed) await ctx.addInitScript(() => {
       const orig = WebGL2RenderingContext.prototype.getExtension;
@@ -46,6 +47,9 @@ try {
   await shot("embed-1280", 1280, 800, "?embed=1");
   await shot("embed-375", 375, 812, "?embed=1");
   await shot("embed-1280-reduced", 1280, 800, "?embed=1", { reduced: true });
+  for (const t of ["dawn", "day", "golden", "dusk", "night"]) await shot(`mood-${t}-1280`, 1280, 800, `?time=${t}&season=summer`);
+  await shot("mood-winter-1280", 1280, 800, "?time=day&season=winter");
+  await shot("mood-night-375", 375, 812, "?time=night&season=summer");
   await browser.close();
   console.log(errors.length ? errors.join("\n") : "no console errors");
 } finally {

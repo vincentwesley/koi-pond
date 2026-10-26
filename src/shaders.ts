@@ -70,39 +70,54 @@ void main(){
   o = ripEnc(vec2(clamp(n, -4.0, 3.99), s.x));
 }`;
 
-/** Static pond floor (rendered once per resize): pebbles, silt, moss, depth tint. */
+/** Shared pond shape: depth 0 at the shore, 1 in the middle; ice grows inward from the shore with uIce. Needs NOISE. */
+const POND = `
+float pondDepth(vec2 uv){
+  vec2 q = (uv - 0.5) * 2.0;
+  float e = pow(pow(abs(q.x), 3.0) + pow(abs(q.y), 3.0), 1.0 / 3.0) + 0.16 * (fbm(uv * vec2(5.0, 3.5) + 4.0) - 0.5);
+  return 1.0 - smoothstep(0.25, 1.12, e);
+}
+`;
+
+/** Static pond floor (rendered once per resize): neutral sand albedo, ripples, river stones, silt. Mood tint is applied per frame. */
 export const FLOOR_FS = `${H}
 in vec2 vUv; out vec4 o;
 uniform vec2 uRes; uniform float uScale;
 ${NOISE}
-vec3 pebbles(vec2 p, out float gap){
-  vec2 i = floor(p), f = fract(p); float d1 = 8.0, d2 = 8.0; vec2 id = vec2(0);
-  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++){
-    vec2 g = vec2(x, y), c = g + 0.15 + 0.7 * hash22(i + g) - f; float d = dot(c, c);
-    if (d < d1){ d2 = d1; d1 = d; id = i + g; } else if (d < d2) d2 = d;
-  }
-  gap = sqrt(d2) - sqrt(d1);
-  float h = hash12(id);
-  vec3 c = mix(vec3(0.2, 0.3, 0.26), vec3(0.36, 0.44, 0.36), h);
-  c = mix(c, vec3(0.34, 0.33, 0.26), step(0.8, hash12(id + 3.7)));
-  float dome = 1.0 - sqrt(d1) * 0.9;
-  return c * (0.75 + 0.35 * dome);
-}
 void main(){
-  vec2 px = vec2(vUv.x, 1.0 - vUv.y) * uRes;
-  vec2 p = px / (24.0 * uScale);
-  float gap; vec3 peb = pebbles(p, gap);
-  peb = mix(peb * 0.6, peb, smoothstep(0.02, 0.2, gap));
-  float big = fbm(px / (260.0 * uScale));
-  float moss = fbm(px / (60.0 * uScale) + 9.0);
-  vec3 silt = mix(vec3(0.12, 0.25, 0.21), vec3(0.22, 0.36, 0.26), moss);
-  vec3 c = mix(silt, peb, smoothstep(0.5, 0.62, big) * 0.85);
-  c *= 0.85 + 0.3 * fbm(px / (14.0 * uScale));
-  // Deeper towards the middle: darker and bluer.
-  vec2 q = abs(vUv - 0.5) * 2.0;
-  float depth = 1.0 - smoothstep(0.55, 1.05, max(q.x, q.y));
-  c = mix(c, vec3(0.05, 0.2, 0.2), depth * 0.45);
-  c *= 1.0 - depth * 0.2;
+  vec2 px = vec2(vUv.x, 1.0 - vUv.y) * uRes / uScale;
+  // Sand: long wind-ripples warped by noise, plus fine grain.
+  float w = fbm(px / 170.0) * 15.0;
+  float rip = sin((px.x * 0.8 + px.y * 0.38) / 11.0 + w) * 0.5 + 0.5;
+  float rip2 = sin((px.x * 0.3 - px.y * 0.9) / 5.5 + w * 1.7) * 0.5 + 0.5;
+  vec3 c = vec3(0.64, 0.57, 0.45) * (0.86 + 0.1 * rip + 0.05 * rip2);
+  c *= 0.93 + 0.14 * vnoise(px / 2.2);
+  c = mix(c, vec3(0.5, 0.46, 0.4), smoothstep(0.55, 0.78, fbm(px / 330.0 + 3.0)) * 0.5);
+  // Dark silt patches.
+  float silt = smoothstep(0.56, 0.74, fbm(px / 240.0 + 11.0));
+  c = mix(c, vec3(0.2, 0.19, 0.17) * (0.8 + 0.4 * vnoise(px / 5.0)), silt * 0.8);
+  // A few big smooth stones on a loose grid.
+  const float CELL = 230.0;
+  vec2 gi = floor(px / CELL), gf = fract(px / CELL);
+  float best = 0.0, shadow = 0.0; vec3 sc = vec3(0);
+  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++){
+    vec2 g = vec2(x, y), id = gi + g;
+    if (hash12(id) < 0.62) continue;
+    vec2 ctr = (g + 0.25 + 0.5 * hash22(id + 1.7)) * CELL, d = gf * CELL - ctr;
+    float a = hash12(id + 5.3) * 3.14159, ca = cos(a), sa = sin(a);
+    d = vec2(ca * d.x + sa * d.y, -sa * d.x + ca * d.y);
+    float rad = 34.0 + 34.0 * hash12(id + 2.9), asp = 0.65 + 0.3 * hash12(id + 8.1);
+    float r = length(d / vec2(rad, rad * asp));
+    shadow = max(shadow, (1.0 - smoothstep(1.0, 1.55, length((d - vec2(6.0, 8.0)) / vec2(rad, rad * asp)))) * 0.45);
+    float dome = sqrt(max(0.0, 1.0 - r * r));
+    if (dome > best){
+      best = dome;
+      vec3 base = mix(vec3(0.46, 0.5, 0.52), vec3(0.62, 0.54, 0.48), hash12(id + 9.9));
+      sc = base * (0.62 + 0.55 * dome - 0.18 * (d.x + d.y) / (rad * 2.0)) * (0.94 + 0.12 * vnoise(d / 6.0));
+    }
+  }
+  c *= 1.0 - shadow * (1.0 - smoothstep(0.0, 0.2, best));
+  c = mix(c, sc, smoothstep(0.0, 0.12, best));
   o = vec4(c, 1.0);
 }`;
 
@@ -110,7 +125,8 @@ void main(){
 export const UNDER_FS = `${H}
 in vec2 vUv; out vec4 o;
 uniform sampler2D uFloor; uniform sampler2D uRip; uniform vec2 uSimTexel; uniform vec2 uRes; uniform float uTime; uniform float uScale;
-${NOISE}${RIP}
+uniform vec3 uLight; uniform vec3 uTint; uniform vec4 uK; // uK = ambient, caustics, moon, ice
+${NOISE}${RIP}${POND}
 float cells(vec2 p, float t){
   vec2 i = floor(p), f = fract(p); float d1 = 8.0, d2 = 8.0;
   for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++){
@@ -132,8 +148,12 @@ void main(){
   float ca = cells(p, uTime) * 0.6 + cells(p * 1.63 + 4.1, uTime * 1.2) * 0.4;
   float focus = clamp(-lap * 6.0, -0.6, 1.6);
   float bands = 0.75 + 0.5 * fbm(px / 400.0 + vec2(uTime * 0.02, 0.0));
-  c += vec3(0.55, 0.75, 0.55) * ca * (0.22 + 0.35 * focus) * bands;
-  c += vec3(0.2, 0.3, 0.22) * focus * 0.15;
+  float d = pondDepth(vUv);
+  // Sunlit sand, then water absorbs: deeper = more of the mood tint, less floor.
+  c *= uLight * uK.x;
+  c += uLight * ca * uK.y * (0.2 + 0.35 * focus) * bands * (1.0 - 0.5 * d);
+  c += uLight * focus * 0.05 * uK.y;
+  c = mix(c, uTint * (0.35 + 0.5 * uK.x), 0.22 + 0.55 * d);
   o = vec4(c, 1.0);
 }`;
 
@@ -296,7 +316,8 @@ void main(){
 export const WATER_FS = `${H}
 in vec2 vUv; out vec4 o;
 uniform sampler2D uUnder; uniform sampler2D uRip; uniform vec2 uSimTexel; uniform vec2 uRes; uniform float uTime; uniform vec3 uWater; uniform float uScale;
-${NOISE}${RIP}
+uniform vec3 uLight; uniform vec3 uSky; uniform vec4 uK; // uK = ambient, caustics (sun), moon, ice
+${NOISE}${RIP}${POND}
 float hgt(vec2 p){ return ripH(uRip, p); }
 void main(){
   vec2 t = uSimTexel;
@@ -306,20 +327,35 @@ void main(){
   // Idle breeze so still water is never dead flat.
   vec2 breeze = vec2(fbm(px / 180.0 + vec2(uTime * 0.05, 0.0)), fbm(px / 180.0 + vec2(5.0, uTime * 0.04))) - 0.5;
   vec3 n = normalize(vec3(-hx * 5.0 + breeze.x * 0.06, -hy * 5.0 + breeze.y * 0.06, 1.0));
+  float dep = pondDepth(vUv);
   vec2 ruv = vUv + n.xy * 22.0 * uScale / uRes;
   vec3 c = texture(uUnder, ruv).rgb;
-  c = mix(c, uWater, 0.18);
+  c = mix(c, uWater, 0.12 + 0.12 * dep);
+  // Soft sky gradient mirrored on the surface, stronger at grazing angles and in the deep middle.
+  vec3 sky = uSky * mix(0.55, 1.15, vUv.y + n.y * 0.5) * (0.5 + 0.5 * uK.x);
+  float fres = pow(1.0 - n.z, 1.5);
+  c = mix(c, sky, clamp(0.07 + 0.06 * dep + fres * 0.9, 0.0, 0.85));
+  // Sun glint by day, moon streak by night: stretched down the water and broken by ripples.
   vec3 L = normalize(vec3(-0.45, 0.55, 0.7)), Hv = normalize(L + vec3(0, 0, 1));
   float sp = pow(max(dot(n, Hv), 0.0), 220.0);
-  c += vec3(1.0, 0.97, 0.88) * sp * 1.6;
-  float fres = pow(1.0 - n.z, 1.5);
-  c += vec3(0.75, 0.9, 0.85) * (0.025 + fres * 0.9);
+  c += uLight * sp * 1.6 * uK.y;
+  vec2 m = vec2(vUv.x - 0.72 + n.x * 0.7 + breeze.x * 0.05, vUv.y - 0.55 + n.y * 0.3);
+  float streak = exp(-m.x * m.x * 2600.0) * exp(-m.y * m.y * 4.0) * smoothstep(0.0, 0.3, 0.95 - vUv.y);
+  float broken = 0.25 + 0.75 * smoothstep(0.3, 0.85, vnoise(vec2(px.x / 12.0 + hx * 120.0, px.y / 4.0 + hy * 120.0 + uTime * 0.7)));
+  c += vec3(0.78, 0.86, 1.0) * streak * broken * uK.z * 0.5;
+  c += vec3(0.85, 0.92, 1.0) * exp(-dot(m, m) * 9000.0) * uK.z * 0.5;
+  // Winter: a thin frosted crust at the shore, with hairline cracks.
+  float ice = smoothstep(0.0, 0.05, uK.w) * (1.0 - smoothstep(0.02 + 0.14 * uK.w, 0.06 + 0.2 * uK.w, dep + 0.08 * (fbm(px / 40.0) - 0.5)));
+  float crack = 1.0 - smoothstep(0.0, 0.025, abs(fbm(px / 70.0 + 7.0) - 0.5));
+  vec3 iceC = mix(vec3(0.72, 0.84, 0.92), vec3(0.95, 0.98, 1.0), fbm(px / 30.0)) * (0.45 + 0.55 * uK.x) * (uLight * 0.4 + 0.6);
+  iceC += crack * 0.07;
+  c = mix(c, iceC, ice * 0.88);
   o = vec4(c, 1.0);
 }`;
 
 export const BRIGHT_FS = `${H}
-in vec2 vUv; out vec4 o; uniform sampler2D uSrc;
-void main(){ vec3 c = texture(uSrc, vUv).rgb; o = vec4(max(c - 0.75, 0.0), 1.0); }`;
+in vec2 vUv; out vec4 o; uniform sampler2D uSrc; uniform float uThr;
+void main(){ vec3 c = texture(uSrc, vUv).rgb; o = vec4(max(c - uThr, 0.0), 1.0); }`;
 
 export const BLUR_FS = `${H}
 in vec2 vUv; out vec4 o; uniform sampler2D uSrc; uniform vec2 uDir;
@@ -332,14 +368,19 @@ void main(){
 
 export const FINAL_FS = `${H}
 in vec2 vUv; out vec4 o;
-uniform sampler2D uScene; uniform sampler2D uBloom; uniform vec2 uPx; uniform float uTime;
-float h(vec2 p){ vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+uniform sampler2D uScene; uniform sampler2D uBloom; uniform vec2 uPx; uniform float uTime; uniform float uBloomG; uniform vec3 uLight;
+${NOISE}
 void main(){
-  vec3 c = texture(uScene, vUv).rgb + texture(uBloom, vUv).rgb * 0.7;
+  vec3 c = texture(uScene, vUv).rgb + texture(uBloom, vUv).rgb * uBloomG;
   c = c / (1.0 + c * 0.12);
   vec2 q = (vUv - 0.5) * vec2(1.0, 0.9);
-  c *= mix(1.0, 0.7, smoothstep(0.25, 0.75, length(q)));
+  c *= mix(1.0, 0.68, smoothstep(0.25, 0.75, length(q)));
   c = pow(c, vec3(0.95, 0.97, 1.0));
-  c += (h(vUv * uPx + fract(uTime) * 91.0) - 0.5) * 0.04;
+  // Paper and ink: static fibre + wash blotches, multiplicative so darks stay clean; tiny animated dither against banding.
+  vec2 px = vUv * uPx;
+  float fibre = vnoise(px / 1.7) * 0.6 + vnoise(px / 5.0 + 3.0) * 0.4;
+  float wash = fbm(px / 90.0);
+  c *= 1.0 + (fibre - 0.5) * 0.07 + (wash - 0.5) * 0.06;
+  c += (hash12(px + fract(uTime) * 91.0) - 0.5) * 0.012;
   o = vec4(c, 1.0);
 }`;

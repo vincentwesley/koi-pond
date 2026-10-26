@@ -2,6 +2,7 @@ import "./style.css";
 import { Pond } from "./scene";
 import { Renderer } from "./renderer";
 import { PondAudio } from "./audio";
+import { mood, parseOverrides } from "./mood";
 
 const embed = document.documentElement.classList.contains("embed");
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -35,6 +36,10 @@ function start(gl: WebGL2RenderingContext): void {
   let renderer: Renderer;
   try { renderer = new Renderer(gl, embed ? 1.5 : 2); } catch (e) { console.error(e); return fail(); }
   canvas.dataset.ripples = renderer.ripplePath;
+  const overrides = parseOverrides(location.search);
+  const feedMood = () => renderer.setMood(mood(new Date(), overrides));
+  feedMood();
+  setInterval(feedMood, 1000); // local clock/date only, about once a second
   const pond = new Pond((Math.random() * 1e9) | 0, 8);
   const audio = new PondAudio();
   let lost = false, running = false, visible = true, last = 0, raf = 0, slow = 0, fast = 0, ema = 1 / 60;
@@ -80,6 +85,7 @@ function start(gl: WebGL2RenderingContext): void {
   canvas.addEventListener("webglcontextrestored", () => {
     try { renderer = new Renderer(gl, embed ? 1.5 : 2); } catch (e) { console.error(e); return fail(); }
     canvas.dataset.ripples = renderer.ripplePath;
+    feedMood();
     lost = false;
     size();
     sync();
