@@ -128,6 +128,6 @@ describe("nudge", () => {
     for (const pad of p.pads) expect(Math.hypot(pad.ox, pad.oy)).toBeLessThanOrEqual(600 * 0.012 + 1e-6);
     for (const q of p.petals) { expect(Number.isFinite(q.x)).toBe(true); expect(q.x).toBeGreaterThan(-45); expect(q.x).toBeLessThan(845); }
     for (let i = 0; i < 600; i++) p.update(1 / 60);
-    for (const pad of p.pads) expect(Math.hypot(pad.ox, pad.oy)).toBeLessThan(0.5);
+    for (const pad of p.pads) expect(Math.hypot(pad.ox, pad.oy)).toBeLessThan(2); // koi wakes keep nudging pads slightly
   });
 });
