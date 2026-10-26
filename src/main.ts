@@ -36,7 +36,7 @@ function start(gl: WebGL2RenderingContext): void {
   try { renderer = new Renderer(gl, embed ? 1.5 : 2); } catch (e) { console.error(e); return fail(); }
   const pond = new Pond((Math.random() * 1e9) | 0, 8);
   const audio = new PondAudio();
-  let running = false, visible = true, last = 0, raf = 0, slow = 0, fast = 0, ema = 1 / 60;
+  let lost = false, running = false, visible = true, last = 0, raf = 0, slow = 0, fast = 0, ema = 1 / 60;
 
   const still = () => {
     // Reduced motion: settle the scene off-screen, then draw a single frame.
@@ -67,14 +67,21 @@ function start(gl: WebGL2RenderingContext): void {
     renderer.frame(pond, dt);
   };
   const sync = () => {
-    const want = !reduced && visible && !document.hidden;
+    const want = !lost && !reduced && visible && !document.hidden;
     if (want && !running) { running = true; last = 0; raf = requestAnimationFrame(tick); }
     else if (!want && running) { running = false; cancelAnimationFrame(raf); }
   };
   document.addEventListener("visibilitychange", sync);
   new IntersectionObserver(([e]) => { visible = e.isIntersecting; sync(); }).observe(canvas);
 
-  canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); running = false; cancelAnimationFrame(raf); fail(); });
+  // Context loss is transient: pause quietly, rebuild GL resources on restore.
+  canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); lost = true; running = false; cancelAnimationFrame(raf); });
+  canvas.addEventListener("webglcontextrestored", () => {
+    try { renderer = new Renderer(gl, embed ? 1.5 : 2); } catch (e) { console.error(e); return fail(); }
+    lost = false;
+    size();
+    sync();
+  });
 
   // Pointer: hover leaves faint trails, press/drag makes real ripples.
   let lastDrop = { x: -1e9, y: -1e9 }, idle = 0;
@@ -90,16 +97,20 @@ function start(gl: WebGL2RenderingContext): void {
     const p = local(e);
     canvas.setPointerCapture(e.pointerId);
     lastDrop = p;
+    pond.pointerShy = 1;
     disturb(p.x, p.y, 1.2);
+    pond.tap(p.x, p.y);
   });
+  // Browser took the gesture (pan-y scroll) or it was interrupted: forget the pointer.
+  canvas.addEventListener("pointercancel", () => { clearTimeout(idle); pond.pointer = null; });
   canvas.addEventListener("pointermove", (e) => {
     const p = local(e), pressed = e.buttons !== 0;
     if (!pressed && e.pointerType !== "mouse") return;
     const gap = Math.min(pond.w, pond.h) * (pressed ? 0.015 : 0.03);
     if (Math.hypot(p.x - lastDrop.x, p.y - lastDrop.y) < gap) return;
     lastDrop = p;
-    if (pressed) disturb(p.x, p.y, 0.45);
-    else { pond.pointer = p; pond.splash(p.x, p.y, 0.1, Math.min(pond.w, pond.h) * 0.012); }
+    if (pressed) { pond.pointerShy = 1; disturb(p.x, p.y, 0.45); }
+    else { pond.pointerShy = 0.5; pond.pointer = p; pond.splash(p.x, p.y, 0.1, Math.min(pond.w, pond.h) * 0.012); }
   });
   canvas.addEventListener("pointerleave", () => { pond.pointer = null; });
 
