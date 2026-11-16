@@ -1,4 +1,6 @@
 import "./style.css";
+import "./brand/logo.css";
+import "./brand/logo-resize";
 import { Pond } from "./scene";
 import { Renderer } from "./renderer";
 import { PondAudio } from "./audio";

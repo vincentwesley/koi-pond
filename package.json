@@ -5,7 +5,7 @@
   "type": "module",
   "description": "An interactive WebGL2 koi pond with ripples, lily pads and procedural koi.",
   "license": "MIT",
-  "author": "Vincent Wesley",
+  "author": "Vin, Vin's Atelier (https://vwesley.dev)",
   "repository": {
     "type": "git",
     "url": "https://github.com/vincentwesley/koi-pond.git"

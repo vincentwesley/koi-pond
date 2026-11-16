@@ -23,3 +23,4 @@ Finish pass done 2026-10-26: typecheck, unit tests (16), e2e + axe (one spec at 
 1. Owner step: OK to push `main` and redeploy gh-pages (build with `--base=/koi-pond/`, publish `dist/` to `gh-pages`).
 2. Audio ambience (crickets, wind, water) has never been listened to; tune gains by ear.
 3. `e2e/mood.spec.ts` night+winter test is slow on software GL and flaked once under load.
+- 2026-11-16: Vin's Atelier draggable logo + sign-off added in the footer credits (branch `vin-atelier-brand`, local, not pushed); spec `e2e/logo.spec.ts`.

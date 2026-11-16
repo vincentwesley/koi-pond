@@ -43,6 +43,10 @@ GitHub Pages cannot set response headers, so `public/_headers` (a strict CSP for
 
 No data is collected. No analytics, no cookies, no network calls, no camera or microphone. The only thing stored is your light/dark theme choice, in your own browser's `localStorage`. No secrets or environment variables are needed.
 
+## Credits
+
+Designed and built by Vin, Vin's Atelier (https://vwesley.dev). Logo by @portus_workstation / @wason25_pz (Instagram); the logo is all rights reserved (see NOTICE.md), not covered by the MIT licence.
+
 ## Licence
 
 Code is MIT (see `LICENSE`). Fonts are SIL OFL 1.1 (see `THIRD_PARTY_NOTICES.md`). The credits art `public/_house/creator.webp` is all rights reserved (see `NOTICE.md`).
