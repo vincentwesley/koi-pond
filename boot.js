@@ -2,5 +2,6 @@
 (function () {
   var d = document.documentElement;
   if (/[?&]embed=1(&|$)/.test(location.search)) d.classList.add("embed");
+  try { var logo = localStorage.getItem("logo-form"); if (logo === "short" || logo === "middle" || logo === "long") d.setAttribute("data-logo", logo); } catch (e) { /* storage blocked */ }
   try { if (localStorage.getItem("theme") === "light") d.dataset.theme = "light"; } catch (e) { /* storage blocked */ }
 })();
