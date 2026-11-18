@@ -12,7 +12,10 @@ test("axe clean light (toggle only)", async ({ page }) => {
   expect(await page.locator("html").getAttribute("data-theme")).toBe("dark");
   await page.locator("#theme").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await page.waitForTimeout(500);
+  // The pills fade their background (0.2s); on a busy software-GL machine that runs late. Wait for the settled light colour
+  // (--bg-elev) so axe never measures a pill mid-fade.
+  await expect.poll(() => page.locator("#sound").evaluate((el) => getComputedStyle(el).backgroundColor), { timeout: 10_000 }).toBe("rgb(251, 254, 252)");
+  await page.waitForTimeout(300);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
