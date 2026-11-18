@@ -25,3 +25,4 @@ Finish pass done 2026-10-26: typecheck, unit tests (16), e2e + axe (one spec at 
 3. `e2e/mood.spec.ts` night+winter test is slow on software GL and flaked once under load.
 - 2026-11-16: Vin's Atelier draggable logo + sign-off added in the footer credits (branch `vin-atelier-brand`, local, not pushed); spec `e2e/logo.spec.ts`.
 - 2026-11-17: re-copied kit tokens.css per UPGRADING.md (credits.css still older kit; needs markup change to upgrade).
+- 2026-11-17: logo spec waits for the --logo-x transition before measuring (15s polls).
