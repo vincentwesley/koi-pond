@@ -27,3 +27,4 @@ Finish pass done 2026-10-26: typecheck, unit tests (16), e2e + axe (one spec at 
 - 2026-11-17: re-copied kit tokens.css per UPGRADING.md (credits.css still older kit; needs markup change to upgrade).
 - 2026-11-17: logo spec waits for the --logo-x transition before measuring (15s polls).
 - 2026-11-18: credits.css upgraded to kit (UPGRADING.md step 6); fireflies now styled in CSS, no inline style attrs.
+- 2026-11-18: DEPLOYED main d59885d to gh-pages (c1e1ad1; built with --base=/koi-pond/, pushed as fast-forward). Live + ?embed=1 verified. Rollback: republish gh-pages 6d4e902 content.
