@@ -28,3 +28,4 @@ Finish pass done 2026-10-26: typecheck, unit tests (16), e2e + axe (one spec at 
 - 2026-11-17: logo spec waits for the --logo-x transition before measuring (15s polls).
 - 2026-11-18: credits.css upgraded to kit (UPGRADING.md step 6); fireflies now styled in CSS, no inline style attrs.
 - 2026-11-18: DEPLOYED main d59885d to gh-pages (c1e1ad1; built with --base=/koi-pond/, pushed as fast-forward). Live + ?embed=1 verified. Rollback: republish gh-pages 6d4e902 content.
+- 2026-11-18: tail fix: the tail root starts inside the body with a real stem width (scene.ts) and the tail fin shape is wider at the root (shaders.ts finShape), so the butterfly tail no longer floats detached behind the fish. e2e 28/29 in the cloud session; `axe clean light` fails there on the Sound pill (bg #1a2015 vs fg #10251a), also on ac5f81a (Nov 5), so not new; a manual check shows the pill settles to #fbfefc within 500 ms. Re-check on a real GPU.

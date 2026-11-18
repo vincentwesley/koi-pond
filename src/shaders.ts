@@ -259,7 +259,7 @@ float finShape(int kind, float x, float y, float s){
     float w = pow(sin(3.14159 * min((x + s * 0.6) * 1.05, 1.0)), 0.6) * (0.35 + 0.65 * x);
     return 1.0 - smoothstep(w - 0.05, w, ay);
   }
-  float w = 0.22 + 0.78 * x;
+  float w = 0.4 + 0.6 * x;
   float a = 1.0 - smoothstep(w - 0.05, w, ay);
   a *= smoothstep(0.0, 0.12, abs(y) - (x - 0.62) * 1.2 - s);
   return a * (1.0 - smoothstep(0.88, 1.0, x + s));

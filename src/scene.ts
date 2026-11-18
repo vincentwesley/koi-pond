@@ -506,12 +506,14 @@ export class Pond {
       // Butterfly tail: a chain of lagging joints, each bending a little after the one before.
       const d = dirAt(n - 2);
       let ang = Math.atan2(d.y, d.x);
-      _tp[0].x = pts[n - 1].x - d.x * L * 0.03; _tp[0].y = pts[n - 1].y - d.y * L * 0.03;
-      _tw[0] = L * 0.05;
+      // The tail root starts inside the body (drawn on top) with a real stem width, so the fan stays joined to the
+      // tapered body end instead of floating behind it on a hairline stem.
+      _tp[0].x = pts[n - 1].x - d.x * L * 0.1; _tp[0].y = pts[n - 1].y - d.y * L * 0.1;
+      _tw[0] = L * 0.07;
       for (let j = 1; j <= TAIL_SEGS; j++) {
         ang += f.tail[j - 1].x;
-        _tp[j].x = _tp[j - 1].x + Math.cos(ang) * L * 0.1; _tp[j].y = _tp[j - 1].y + Math.sin(ang) * L * 0.1;
-        _tw[j] = L * (0.05 + 0.15 * Math.sin(Math.min(1, j / 3.2) * Math.PI * 0.5));
+        _tp[j].x = _tp[j - 1].x + Math.cos(ang) * L * 0.09; _tp[j].y = _tp[j - 1].y + Math.sin(ang) * L * 0.09;
+        _tw[j] = L * (0.07 + 0.13 * Math.sin(Math.min(1, j / 3.2) * Math.PI * 0.5));
       }
       under.ribbon(_tp, _tw, 0, 0, k(2));
       under.ribbon(pts, hw, L, maxHw, k(0));
